@@ -352,7 +352,7 @@ def test_move_latest_download_since_uses_only_new_files(tmp_path):
     assert output_path.read_text(encoding="utf-8") == "new"
 
 
-def test_account_balances_uses_history_panel_after_search(mock_page):
+def test_account_balances_uses_direct_download_after_search(mock_page):
     from app.downloaders import download_report_for_month
     from app.config import AppConfig
     from app.dates import MonthPeriod
@@ -384,19 +384,15 @@ def test_account_balances_uses_history_panel_after_search(mock_page):
             ),
         ) as save_download,
         patch("app.downloaders.ensure_dir", return_value=Path("/tmp/exports/account_balances")),
-        patch("app.downloaders._load_export_rows", return_value=[{"id": "5", "status_id": "ready"}]),
     ):
         download_report_for_month(session, config, "account_balances", period)
 
     assert apply_search.call_count >= 1
-    # account_balances uses export_via_history=True — _save_download must be called
-    # with via_history=True and before_max_id from the API snapshot
+    # account_balances uses direct browser download (export_via_history=False)
     save_download.assert_called_once()
     call_args, call_kwargs = save_download.call_args
     # via_history is the 6th positional arg (index 5)
-    assert call_args[5] is True
-    assert call_kwargs.get("before_max_id") == 5
-    assert call_kwargs.get("session") is session
+    assert call_args[5] is False
 
 
 def test_apply_search_falls_back_when_show_button_not_found(mock_page):

@@ -231,7 +231,6 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
             ("Архивные счета", "Исключить"),
         ),
         checkbox_filters=(("Мои счета", False),),
-        export_via_history=True,
         file_prefix="acc_balance",
         append_month_to_filename=False,
         wait_after_export_ms=8000,

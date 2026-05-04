@@ -379,7 +379,7 @@ def _save_download(
     _trigger_export_with_marker + _wait_for_export_ready_by_name +
     _download_from_history directly in download_report_for_month.
     """
-    logger.info("download | waiting for export")
+    logger.info("download | mode=%s | target=%s", "history" if via_history else "direct", output_path)
     if via_history:
         _step("export click start")
         _click_export(page)
@@ -396,14 +396,20 @@ def _save_download(
             _step("export click done")
         download = download_info.value
     suggested = normalize_download_name(download.suggested_filename)
+    logger.info("download | browser filename=%s | url=%s", suggested, download.url)
     ext = _determine_extension(suggested, download.url)
     final_path = output_path.with_suffix(ext)
     if final_path != output_path:
+        logger.info("download | ext adjusted -> %s", final_path)
         output_path = final_path
     tmp_path = target_dir / f"_tmp_{suggested}"
+    logger.info("download | saving tmp -> %s", tmp_path)
     download.save_as(str(tmp_path))
+    logger.info("download | moving -> %s", output_path)
     _move_download(tmp_path, output_path)
-    if output_path.stat().st_size == 0:
+    size = output_path.stat().st_size
+    logger.info("download | saved | size=%s | path=%s", size, output_path)
+    if size == 0:
         raise RuntimeError("Downloaded file is empty")
     return output_path
 
@@ -431,7 +437,7 @@ def download_report_for_month(
     page = session.page
     target_dir = ensure_dir(config.download_dir / report.export_dir)
     url = report.build_url(config.base_url.rstrip("/"), month_period)
-    use_end_date = not report.append_month_to_filename and report.export_via_history and report.payment_date_filter and report.single_date_filter
+    use_end_date = not report.append_month_to_filename and report.payment_date_filter and report.single_date_filter
     export_file_name = (
         f"{report.file_prefix}_{month_period.label}.xlsx"
         if report.append_month_to_filename
