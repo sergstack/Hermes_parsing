@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.dates import build_months_range_until_year_end, MonthPeriod
+from app.dates import build_months_range_until_year_end
 from app.reports import (
     REPORT_DEFINITIONS,
     _build_account_balances_url,
@@ -73,6 +73,11 @@ def test_budget_rows_no_api_endpoint():
     assert REPORT_DEFINITIONS["budget_rows"].export_endpoint is None
 
 
+def test_budget_rows_date_filter_label():
+    """budget_rows must fill the UI field labeled 'Дата оплаты'."""
+    assert REPORT_DEFINITIONS["budget_rows"].date_filter_label == "Дата оплаты"
+
+
 def test_applications_uses_export_marker():
     """applications must still use the filename-popover flow after refactor."""
     assert REPORT_DEFINITIONS["applications"].use_export_marker is True
@@ -100,6 +105,46 @@ def test_dds_expenses_renamed_to_dds():
     assert rd.file_prefix == "dds"
 
 
+def test_p_fact_definition():
+    rd = REPORT_DEFINITIONS["p-fact"]
+    assert rd.export_dir == "p-fact"
+    assert rd.file_prefix == "p-fact"
+    assert rd.use_export_marker is False
+    assert rd.export_via_history is True
+
+
 def test_dds_reserves_removed():
     """dds_reserves report must no longer exist."""
     assert "dds_reserves" not in REPORT_DEFINITIONS
+
+
+def test_contractors_use_ui_export_marker_and_russian_prefix():
+    rd = REPORT_DEFINITIONS["contractors"]
+    assert rd.export_endpoint is None
+    assert rd.use_export_marker is True
+    assert rd.file_prefix == "contractors"
+    assert rd.append_month_to_filename is False
+
+
+def test_account_balances_definition():
+    rd = REPORT_DEFINITIONS["account_balances"]
+    assert rd.export_dir == "account_balances"
+    assert rd.file_prefix == "acc_balance"
+    assert rd.append_month_to_filename is False
+    assert rd.export_endpoint is None
+    assert rd.payment_date_filter is True
+    assert rd.date_filter_label == "Дата"
+    assert rd.select_filters == (
+        ("Отчетная валюта", "EUR"),
+        ("Нулевые остатки", "--"),
+        ("Заблокированные", "--"),
+        ("Закрытые счета", "--"),
+        ("Счета-копилки", "--"),
+        ("Архивные счета", "Исключить"),
+    )
+    assert rd.checkbox_filters == (("Мои счета", False),)
+
+
+def test_account_balances_export_name_format_uses_month_end():
+    rd = REPORT_DEFINITIONS["account_balances"]
+    assert rd.file_prefix == "acc_balance"
