@@ -388,10 +388,9 @@ def test_account_balances_uses_direct_download_after_search(mock_page):
         download_report_for_month(session, config, "account_balances", period)
 
     assert apply_search.call_count >= 1
-    # account_balances uses direct browser download (export_via_history=False)
     save_download.assert_called_once()
-    call_args, call_kwargs = save_download.call_args
-    # via_history is the 6th positional arg (index 5)
+    # account_balances is a direct browser download — via_history must be False
+    call_args = save_download.call_args[0]
     assert call_args[5] is False
 
 

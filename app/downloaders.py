@@ -26,6 +26,7 @@ from .export_api import (
 from .export_files import (
     determine_extension as _determine_extension,
     move_latest_download as _move_latest_download,
+    move_latest_download_since as _move_latest_download_since,
     move_download as _move_download,
     save_export_bytes as _save_export_bytes,
 )
@@ -66,9 +67,16 @@ def _click_export(page: Page) -> None:
     last_error: Exception | None = None
     for selector in EXPORT_BUTTON_SELECTORS:
         try:
-            page.locator(selector).first.click(timeout=5000)
+            loc = page.locator(selector)
+            count = loc.count()
+            if count == 0:
+                continue
+            logger.info("download | export button | selector=%r count=%s", selector, count)
+            loc.first.click(timeout=5000)
+            logger.info("download | export button clicked | selector=%r", selector)
             return
         except Exception as exc:  # noqa: BLE001
+            logger.debug("download | export button | selector=%r failed: %s", selector, exc)
             last_error = exc
     raise RuntimeError("Export button not found") from last_error
 
