@@ -331,6 +331,34 @@ def _download_from_history(
     return output_path
 
 
+def _wait_for_new_export_row(
+    session: "BrowserSession",
+    base_url: str,
+    before_max_id: int,
+    timeout_ms: int,
+) -> None:
+    """Poll /api/resources/export-file/all until a new row with id > before_max_id has status 'ready'."""
+    poll_interval_ms = 3000
+    waited_ms = 0
+    while waited_ms <= timeout_ms:
+        rows = _load_export_rows(session, base_url)
+        for row in rows:
+            row_id = int(row.get("id", 0))
+            if row_id <= before_max_id:
+                continue
+            status = row.get("status_id", "")
+            name = row.get("original_file_name") or row.get("file_name") or ""
+            if status == "ready":
+                _step(f"api-poll ready: id={row_id} name={name}")
+                return
+            if status == "fail":
+                raise RuntimeError(f"Export id={row_id} failed on server (status=fail)")
+        logger.info("download | api-poll | no new ready row yet, waited %sms", waited_ms)
+        session.page.wait_for_timeout(poll_interval_ms)
+        waited_ms += poll_interval_ms
+    raise RuntimeError(f"No new export row became ready within {timeout_ms}ms")
+
+
 def _save_download(
     page: Page,
     target_dir: Path,
@@ -338,10 +366,13 @@ def _save_download(
     timeout_ms: int,
     wait_after_export_ms: int = 5000,
     via_history: bool = False,
+    session: "BrowserSession | None" = None,
+    base_url: str = "",
+    before_max_id: int = 0,
 ) -> Path:
     """Trigger export via UI and save the file.
 
-    via_history=True  — click export → fixed wait → history panel → first button.
+    via_history=True  — click export → wait for new export row via API → history panel → first button.
     via_history=False — click export → browser download dialog.
 
     For marker-based exports (applications, budget_rows) use
@@ -353,7 +384,10 @@ def _save_download(
         _step("export click start")
         _click_export(page)
         _step("export click done")
-        page.wait_for_timeout(wait_after_export_ms)
+        if session and base_url:
+            _wait_for_new_export_row(session, base_url, before_max_id, timeout_ms)
+        else:
+            page.wait_for_timeout(wait_after_export_ms)
         download = _download_first_exported_file(page, timeout_ms)
     else:
         with page.expect_download(timeout=timeout_ms) as download_info:
@@ -555,6 +589,15 @@ def download_report_for_month(
                         page, target_dir, output_path, config.timeout_ms
                     )
                 else:
+                    if report.export_via_history:
+                        _via_base_url = config.base_url.rstrip("/")
+                        _via_before_rows = _load_export_rows(session, _via_base_url)
+                        _via_before_max_id = max(
+                            (int(r.get("id", 0)) for r in _via_before_rows), default=0
+                        )
+                    else:
+                        _via_base_url = ""
+                        _via_before_max_id = 0
                     saved_path = _save_download(
                         page,
                         target_dir,
@@ -562,6 +605,9 @@ def download_report_for_month(
                         config.timeout_ms,
                         report.wait_after_export_ms,
                         report.export_via_history,
+                        session=session if report.export_via_history else None,
+                        base_url=_via_base_url,
+                        before_max_id=_via_before_max_id,
                     )
             log_result(report_code, month_period, "saved", str(saved_path))
             return DownloadResult(True, saved_path)

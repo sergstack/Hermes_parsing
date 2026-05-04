@@ -384,14 +384,19 @@ def test_account_balances_uses_history_panel_after_search(mock_page):
             ),
         ) as save_download,
         patch("app.downloaders.ensure_dir", return_value=Path("/tmp/exports/account_balances")),
+        patch("app.downloaders._load_export_rows", return_value=[{"id": "5", "status_id": "ready"}]),
     ):
         download_report_for_month(session, config, "account_balances", period)
 
     assert apply_search.call_count >= 1
-    # account_balances uses export_via_history=True — _save_download must be called with via_history=True
+    # account_balances uses export_via_history=True — _save_download must be called
+    # with via_history=True and before_max_id from the API snapshot
     save_download.assert_called_once()
-    _, kwargs = save_download.call_args
-    assert kwargs.get("via_history") is True or save_download.call_args[0][5] is True
+    call_args, call_kwargs = save_download.call_args
+    # via_history is the 6th positional arg (index 5)
+    assert call_args[5] is True
+    assert call_kwargs.get("before_max_id") == 5
+    assert call_kwargs.get("session") is session
 
 
 def test_apply_search_falls_back_when_show_button_not_found(mock_page):
