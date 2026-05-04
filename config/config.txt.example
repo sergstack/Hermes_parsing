@@ -1,0 +1,11 @@
+# Herm Finance exporter configuration
+start_date=2026-01-01
+base_url=https://herm.finance
+download_dir=./exports
+session_file=./state/herm_session.json
+headless=false
+overwrite=true
+timeout_ms=60000
+slow_mo=0
+repeat_each_month=false
+

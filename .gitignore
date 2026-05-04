@@ -1,0 +1,14 @@
+.DS_Store
+.claude/
+.codex/
+.pytest_cache/
+.venv/
+venv/
+__pycache__/
+*.pyc
+config/config.txt
+logs/
+output/
+exports/
+state/
+tests/__pycache__/
