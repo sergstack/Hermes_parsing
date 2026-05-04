@@ -68,6 +68,7 @@ Dry-run writes a machine-readable plan to `logs/summary.json`.
 | `budget_rows` | `budget_rows` | `raw` | UI: «Скачать .xlsx» → popover с именем файла → история выгрузок |
 | `contractors` | `contractors` | `contractors` | UI: кнопка «Скачать» → popover с именем файла → история выгрузок |
 | `account_balances` | `account_balances` | `acc_balance` | UI: «Показать» → «Скачать» → перенос свежего `.xlsx` из `Downloads` |
+| `cons_budget` | `cons_budget` | `cons_budget` | UI: полный год → «Показать» → «Экспортировать всё» → прямое скачивание |
 
 ## Фильтры отчёта account_balances
 
@@ -94,6 +95,22 @@ Dry-run writes a machine-readable plan to `logs/summary.json`.
 
 > Дропдаун «Резервы» не подхватывает URL-параметр `excludeReserve=2` автоматически —
 > скрипт программно кликает опцию «исключить» после загрузки страницы.
+
+## Фильтры отчёта cons_budget
+
+| Параметр | Значение |
+|---|---|
+| Период | полный год из `dates_period[0]` и `dates_period[1]` |
+| Статусы | все выбранные в URL |
+| Уровень | 3 |
+| ЦФО | пусто |
+| Проекты | `Azp_admin` |
+| ВГО | исключить |
+| Отображать столбцы | `План-факт` |
+| Отображать отклонение | выключено |
+| План/факт / IN-OUT(текущий) | пусто |
+| План/факт / IN-OUT(предыдущий) | пусто |
+| Отчётная валюта | EUR |
 
 ## Методы выгрузки
 
@@ -150,6 +167,16 @@ Dry-run writes a machine-readable plan to `logs/summary.json`.
 4. Нажать «Скачать» и дождаться появления свежего `.xlsx` в `~/Downloads`.
 5. Переместить найденный файл в `./exports/account_balances/` и переименовать его в `acc_balance_YYYY-MM-DD.xlsx`.
 
+### UI-метод с прямым скачиванием (`cons_budget`)
+
+Применяется для отчёта «План-факт по конс. бюджету (за период)».
+
+1. Открыть страницу отчёта с полным годовым периодом и фильтрами из URL.
+2. Подождать 2 секунды, чтобы страница применила параметры.
+3. Нажать «Показать» — ждать `networkidle`.
+4. Нажать кнопку «Экспортировать всё».
+5. Дождаться появления браузерной загрузки и сохранить файл напрямую.
+
 ### API-метод (остальные отчёты)
 
 1. Открыть нужную страницу отчёта (устанавливает cookies/контекст).
@@ -172,4 +199,6 @@ Dry-run writes a machine-readable plan to `logs/summary.json`.
 - `account_balances` скачивается через кнопку «Скачать» и сохраняется как
   `acc_balance_YYYY-MM-DD.xlsx`, где дата в имени файла соответствует
   последнему дню месяца.
+- `cons_budget` скачивается через кнопку «Экспортировать всё» и сохраняется как
+  `cons_budget.xlsx` в `exports/cons_budget/`.
 - `logs/summary.json` is written after dry-run and after a normal run.

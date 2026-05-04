@@ -1,26 +1,21 @@
 # Plan
 
-## Phase 1: Safe preparation
-1. Normalize formatting without changing logic.
-2. Add dev dependencies and document check commands.
-3. Add project instructions and planning artifacts.
+## Phase 1: Report definition
+1. Add a dedicated branch for `consolidated_plan_fact_monthly_report`.
+2. Encode the full-period dates from the request URL.
+3. Map the strict UI filters from the screenshots.
 
-## Phase 2: Test foundation
-1. Expand unit coverage for config, dates, paths, and report validation.
-2. Add a `--dry-run` mode that reads config, builds periods and paths, and does not open a browser.
-3. Document the dry-run and live-smoke expectations.
+## Phase 2: Output contract
+1. Write exports to the `cons_budget` folder.
+2. Choose a filename prefix that matches the branch contract.
+3. Keep existing report outputs unchanged.
 
-## Phase 3: Behavior-preserving refactor
-1. Split `app/downloaders.py` into smaller modules for UI actions, API actions, file handling, and orchestration.
-2. Keep the public entrypoint compatible while moving internals.
-3. Run the smallest relevant checks after each step.
+## Phase 3: UI/export flow
+1. Apply the visible filters before export.
+2. Click `Показать`.
+3. Click `Экспортировать всё`.
 
-## Phase 4: Reliability improvements
-1. Replace only the most fragile waits with condition-based waits where the condition is reliable.
-2. Move selectors into a dedicated module or section with comments about purpose and failure mode.
-3. Improve error reporting with structured context when practical.
-
-## Phase 5: Operational quality
-1. Add CLI flags for config path, report selection, date range, dry-run, headless mode, and overwrite behavior if they fit the current design.
-2. Add machine-readable summary output if it can be done without widening scope too much.
-3. Update README with developer workflow and troubleshooting notes.
+## Phase 4: Tests and docs
+1. Add focused tests for URL construction and filter behavior.
+2. Add focused tests for path naming and output placement.
+3. Update README only if the new flow needs user-facing documentation.

@@ -137,6 +137,24 @@ def _build_account_balances_url(base_url: str, period: MonthPeriod) -> str:
     )
 
 
+def _build_cons_budget_url(base_url: str, period: MonthPeriod) -> str:
+    start, end = month_start_end(period)
+    return (
+        f"{base_url}/budgeting/reports/consolidated_plan_fact_monthly_report?"
+        f"dates_period%5B0%5D={start}&dates_period%5B1%5D={end}"
+        "&projects%5B0%5D=5"
+        "&statuses%5B0%5D=7&statuses%5B1%5D=6&statuses%5B2%5D=5"
+        "&statuses%5B3%5D=2&statuses%5B4%5D=3"
+        "&level=3"
+        "&excludeIntraCompany=1"
+        "&showDiff=false"
+        "&showCurrentInOutDiff=false"
+        "&showPrevInOutDiff=false"
+        "&planFactDisplayOption=planAndFact"
+        "&reportCurrencyId=5"
+    )
+
+
 REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
     "applications": ReportDefinition(
         "applications",
@@ -234,6 +252,19 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         file_prefix="acc_balance",
         append_month_to_filename=False,
         wait_after_export_ms=8000,
+    ),
+    "cons_budget": ReportDefinition(
+        "cons_budget",
+        "/budgeting/reports/consolidated_plan_fact_monthly_report",
+        _build_cons_budget_url,
+        "cons_budget",
+        apply_search_before_export=True,
+        pre_search_wait_ms=2000,
+        search_done_selector=None,
+        file_prefix="cons_budget",
+        append_month_to_filename=False,
+        repeat_each_month=False,
+        wait_after_export_ms=3000,
     ),
 }
 

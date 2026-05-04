@@ -81,6 +81,8 @@ def test_apply_search_for_applications_clicks_show(mock_page):
     def locator_side_effect(selector):
         if selector == "button.el-button--primary.el-button--small":
             return primary_buttons
+        if selector == "button:has-text('Показать')":
+            return primary_buttons
         if selector == ".dx-loadpanel-content":
             return done_locator
         raise AssertionError(selector)

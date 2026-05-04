@@ -26,7 +26,6 @@ from .export_api import (
 from .export_files import (
     determine_extension as _determine_extension,
     move_latest_download as _move_latest_download,
-    move_latest_download_since as _move_latest_download_since,
     move_download as _move_download,
     save_export_bytes as _save_export_bytes,
 )
@@ -43,6 +42,7 @@ from .selectors import (
     RESERVES_SELECT_SELECTOR,
     SHOW_BUTTON_SEARCH_SELECTOR,
     SHOW_BUTTON_SELECTOR,
+    SHOW_BUTTON_TEXT_SELECTOR,
     VISIBLE_DOWNLOAD_SELECTOR,
 )
 from .paths import (
@@ -201,6 +201,8 @@ def _apply_search(
         show_button = page.locator(SHOW_BUTTON_SEARCH_SELECTOR)
     if show_button.count() == 0:
         show_button = page.locator(SHOW_BUTTON_SELECTOR)
+    if show_button.count() == 0:
+        show_button = page.locator(SHOW_BUTTON_TEXT_SELECTOR)
     show_button.first.click(timeout=15000)
     if done_selector:
         page.locator(done_selector).wait_for(state="hidden", timeout=timeout_ms)
@@ -234,6 +236,39 @@ def _download_first_exported_file(page: Page, timeout_ms: int):
         btn.click(timeout=5000)
     _step("file download done")
     return download_info.value
+
+
+def _history_top_row_text(page: Page, timeout_ms: int) -> str:
+    files_popover = (
+        page.locator(FILES_TOOLTIP_SELECTOR)
+        .filter(has=page.locator(DOWNLOAD_BUTTON_SELECTOR))
+        .first
+    )
+    row = files_popover.locator("tr").first
+    row.wait_for(state="visible", timeout=timeout_ms)
+    return (row.inner_text(timeout=timeout_ms) or "").strip()
+
+
+def _snapshot_history_top_row(page: Page, timeout_ms: int) -> str:
+    page.locator(FILES_BUTTON_SELECTOR).click(timeout=5000)
+    text = _history_top_row_text(page, timeout_ms)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(250)
+    return text
+
+
+def _wait_for_history_refresh(page: Page, baseline: str, timeout_ms: int) -> None:
+    deadline = timeout_ms / 1000
+    waited = 0.0
+    while waited <= deadline:
+        page.locator(FILES_BUTTON_SELECTOR).click(timeout=5000)
+        current = _history_top_row_text(page, timeout_ms)
+        if current and current != baseline:
+            return
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(3000)
+        waited += 3
+    raise RuntimeError("Export history did not refresh with a new row")
 
 
 def _wait_for_export_ready_by_name(
@@ -392,10 +427,7 @@ def _save_download(
         _step("export click start")
         _click_export(page)
         _step("export click done")
-        if session and base_url:
-            _wait_for_new_export_row(session, base_url, before_max_id, timeout_ms)
-        else:
-            page.wait_for_timeout(wait_after_export_ms)
+        page.wait_for_timeout(wait_after_export_ms)
         download = _download_first_exported_file(page, timeout_ms)
     else:
         with page.expect_download(timeout=timeout_ms) as download_info:
@@ -604,25 +636,28 @@ def download_report_for_month(
                     )
                 else:
                     if report.export_via_history:
-                        _via_base_url = config.base_url.rstrip("/")
-                        _via_before_rows = _load_export_rows(session, _via_base_url)
-                        _via_before_max_id = max(
-                            (int(r.get("id", 0)) for r in _via_before_rows), default=0
+                        _via_history_baseline = _snapshot_history_top_row(
+                            page, config.timeout_ms
+                        )
+                        page.wait_for_timeout(report.wait_after_export_ms)
+                        _wait_for_history_refresh(
+                            page, _via_history_baseline, config.timeout_ms
+                        )
+                        saved_path = _download_from_history(
+                            page, target_dir, output_path, config.timeout_ms
                         )
                     else:
-                        _via_base_url = ""
-                        _via_before_max_id = 0
-                    saved_path = _save_download(
-                        page,
-                        target_dir,
-                        output_path,
-                        config.timeout_ms,
-                        report.wait_after_export_ms,
-                        report.export_via_history,
-                        session=session if report.export_via_history else None,
-                        base_url=_via_base_url,
-                        before_max_id=_via_before_max_id,
-                    )
+                        saved_path = _save_download(
+                            page,
+                            target_dir,
+                            output_path,
+                            config.timeout_ms,
+                            report.wait_after_export_ms,
+                            report.export_via_history,
+                            session=None,
+                            base_url="",
+                            before_max_id=0,
+                        )
             log_result(report_code, month_period, "saved", str(saved_path))
             return DownloadResult(True, saved_path)
         except PlaywrightTimeoutError as exc:

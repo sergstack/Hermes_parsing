@@ -6,12 +6,13 @@ import argparse
 import json
 import logging
 from dataclasses import dataclass, replace
+from datetime import date, timedelta
 from pathlib import Path
 
 from .auth import ensure_logged_in, save_session_state
 from .browser import close_browser_session
 from .config import normalize_config, read_config
-from .dates import build_months_range, build_months_range_until_year_end
+from .dates import MonthPeriod, build_months_range, build_months_range_until_year_end
 from .downloaders import download_report_for_month
 from .logging_utils import setup_logging
 from .paths import build_output_path
@@ -62,14 +63,26 @@ def _apply_overrides(config, args: argparse.Namespace):
     return config
 
 
+def _cons_budget_periods(today: date | None = None) -> list[MonthPeriod]:
+    current = today or date.today()
+    last_completed_month_end = current.replace(day=1) - timedelta(days=1)
+    return [
+        MonthPeriod(start=date(2025, 1, 1), end=last_completed_month_end),
+    ]
+
+
+def _periods_for_report(report_code: str, start_date: str, today: date | None = None):
+    if report_code == "budget_rows":
+        return build_months_range_until_year_end(start_date)
+    if report_code == "cons_budget":
+        return _cons_budget_periods(today)
+    return build_months_range(start_date)
+
+
 def _build_planned_reports(config, report_codes: list[str]) -> list[dict]:
-    periods = build_months_range(config.start_date)
-    budget_rows_periods = build_months_range_until_year_end(config.start_date)
     planned: list[dict] = []
     for report_code in report_codes:
-        active_periods = (
-            budget_rows_periods if report_code == "budget_rows" else periods
-        )
+        active_periods = _periods_for_report(report_code, config.start_date)
         report = REPORT_DEFINITIONS[report_code]
         for period in active_periods:
             if report_code == "contractors" and not config.repeat_each_month:
@@ -87,7 +100,10 @@ def _build_planned_reports(config, report_codes: list[str]) -> list[dict]:
                             period,
                             ".xlsx",
                             report.file_prefix,
-                            use_end_date=report_code == "account_balances",
+                            use_end_date=report_code in {
+                                "account_balances",
+                                "cons_budget",
+                            },
                         )
                     ),
                 }
@@ -140,14 +156,10 @@ def main() -> int:
 
     summary = RunSummary()
     session = ensure_logged_in(config)
-    periods = build_months_range(config.start_date)
-    budget_rows_periods = build_months_range_until_year_end(config.start_date)
 
     try:
         for report_code in report_codes:
-            active_periods = (
-                budget_rows_periods if report_code == "budget_rows" else periods
-            )
+            active_periods = _periods_for_report(report_code, config.start_date)
             for period in active_periods:
                 if (
                     report_code == "contractors"

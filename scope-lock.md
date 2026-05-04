@@ -16,21 +16,25 @@
 - `plan.md`
 - `tasks.md`
 - `AGENTS.md`
-- unrelated report modules unless required for `account_balances`
+- unrelated report modules
+- files or branches from older Herm Finance flows unless explicitly required for `consolidated_plan_fact_monthly_report`
 
 ## Allowed actions
-- Adjust the `account_balances` report definition.
-- Add or adjust path naming so exports go to `exports/account_balances/`.
-- Add or adjust filename logic so the prefix is `acc_balance_YYYY-MM-DD` using month-end dates.
+- Work only in the new branch for `consolidated_plan_fact_monthly_report`.
+- Add or adjust the `consolidated_plan_fact_monthly_report` report definition.
+- Add or adjust date-range and filter handling for the new report flow.
+- Add or adjust path naming so the new branch writes to the target folder `cons_budget`.
+- Add or adjust filename prefixing if needed for the new branch.
 - Add or adjust tests for URL, path, and download behavior.
 - Update documentation only if needed to reflect the new export flow.
 
 ## Forbidden actions
 - Refactor unrelated export flows.
 - Change existing Herm Finance behavior for other reports.
+- Modify any older branch or flow unless it is required to support `consolidated_plan_fact_monthly_report`.
 - Add new tools, workflows, or broad architectural changes.
-- Modify data logic outside the `account_balances` flow.
+- Modify data logic outside the `consolidated_plan_fact_monthly_report` flow.
 
 ## Public behavior
 - Existing report flows must not change.
-- Public behavior may change only for the `account_balances` flow.
+- Public behavior may change only for the `consolidated_plan_fact_monthly_report` flow.

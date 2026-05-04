@@ -38,6 +38,15 @@ def existing_output_paths(
     # Also match "prefix_YYYY-MM-DD.ext" (e.g. acc_balance_2025-01-31.xlsx)
     # because some reports use end-of-month date instead of YYYY-MM label.
     results |= set(directory.glob(f"*_{period.label}-??.*"))
+    # Match year-end exports that use a single annual period but save as YYYY-12-31.
+    if (
+        period.start.year == period.end.year
+        and period.start.month == 1
+        and period.start.day == 1
+        and period.end.month == 12
+        and period.end.day == 31
+    ):
+        results |= set(directory.glob(f"*_{period.start.year}-12-31.*"))
     return sorted(results)
 
 
