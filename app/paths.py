@@ -7,6 +7,17 @@ from pathlib import Path
 from .dates import MonthPeriod
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_project_path(path: str | Path, project_root: Path = PROJECT_ROOT) -> Path:
+    """Resolve a project-relative runtime path without depending on shell cwd."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (project_root / candidate).resolve()
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -18,7 +29,7 @@ def build_output_path(download_dir: Path, report_code: str, period: MonthPeriod,
 
 
 def existing_output_paths(download_dir: Path, report_code: str, period: MonthPeriod) -> list[Path]:
-    return sorted((download_dir / report_code).glob(f"*_{period.label}.*"))
+    return sorted((download_dir / report_code).glob(f"*_{period.label}*"))
 
 
 def normalize_download_name(filename: str, fallback_ext: str = ".bin") -> str:

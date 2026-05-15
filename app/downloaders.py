@@ -32,10 +32,17 @@ class DownloadResult:
 
 
 def _click_export(page: Page) -> None:
+    try:
+        page.get_by_role("button", name="Экспортировать всё").click(timeout=5000)
+        return
+    except Exception:  # noqa: BLE001
+        pass
     candidates = [
-        "button:has-text('Скачать')",
+        "div.dx-datagrid-export-button[aria-label='Экспортировать всё']",
         ".dx-datagrid-export-button",
         "[aria-label='Экспортировать всё']",
+        "[title='Экспортировать всё']",
+        "button:has-text('Скачать')",
         "button:has-text('Export')",
         "button:has-text('Экспорт')",
         "[data-testid*='export']",
@@ -86,16 +93,24 @@ def _set_date_range_by_label(page: Page, label_text: str, start: str, end: str) 
         pass
     form_item = page.locator(".el-form-item").filter(has_text=label_text).first
     inputs = form_item.locator("input.el-range-input")
-    # Start date — use focus() instead of click() to avoid triggering adjacent pickers
-    inputs.nth(0).focus(timeout=10000)
-    page.keyboard.press("Control+A")
-    inputs.nth(0).fill(start, timeout=3000)
-    page.wait_for_timeout(200)
-    # End date
-    inputs.nth(1).focus(timeout=10000)
-    page.keyboard.press("Control+A")
-    inputs.nth(1).fill(end, timeout=3000)
-    page.wait_for_timeout(200)
+    inputs.first.wait_for(state="visible", timeout=10000)
+
+    for index, value in ((0, start), (1, end)):
+        field = inputs.nth(index)
+        field.click(timeout=10000)
+        field.fill(value, timeout=3000)
+        field.evaluate(
+            """(el, value) => {
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                setter.call(el, value);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.blur();
+            }""",
+            value,
+        )
+        page.wait_for_timeout(200)
+
     # Close the calendar popup before clicking «Показать».
     # Escape alone is unreliable — combine with a mouse click far from the picker.
     page.keyboard.press("Escape")
@@ -103,6 +118,32 @@ def _set_date_range_by_label(page: Page, label_text: str, start: str, end: str) 
     # Click top-left corner (outside any panel) to blur the picker and dismiss the calendar.
     page.mouse.click(4, 4)
     page.wait_for_timeout(300)
+
+    actual_start = inputs.nth(0).input_value(timeout=3000)
+    actual_end = inputs.nth(1).input_value(timeout=3000)
+    if actual_start != start or actual_end != end:
+        raise RuntimeError(
+            f"Date filter '{label_text}' was not applied: "
+            f"expected {start} - {end}, got {actual_start!r} - {actual_end!r}"
+        )
+
+
+def _clear_checked_boxes_by_label(page: Page, labels: tuple[str, ...]) -> None:
+    for label in labels:
+        form_item = page.locator(".el-form-item").filter(has_text=label).first
+        checked_box = form_item.locator(".el-checkbox__input.is-checked").first
+        if checked_box.count() > 0:
+            checked_box.click(timeout=5000)
+            page.wait_for_timeout(100)
+
+
+def _set_select_filters_by_label(page: Page, filters: tuple[tuple[str, str], ...]) -> None:
+    for label, value in filters:
+        form_item = page.locator(".el-form-item").filter(has_text=label).first
+        form_item.locator(".el-select").first.click(timeout=5000)
+        page.wait_for_timeout(500)
+        page.locator(".el-select-dropdown__item").filter(has_text=value).last.click(timeout=5000)
+        page.wait_for_timeout(300)
 
 
 def _apply_search(
@@ -113,14 +154,22 @@ def _apply_search(
     reserves_filter_value: str | None = None,
     payment_date: tuple[str, str] | None = None,
     date_filter_label: str = "Дата оплаты",
+    clear_checkbox_labels: tuple[str, ...] = (),
+    select_filters: tuple[tuple[str, str], ...] = (),
 ) -> None:
     if pre_wait_ms:
         page.wait_for_timeout(pre_wait_ms)
     if payment_date:
         _set_date_range_by_label(page, date_filter_label, payment_date[0], payment_date[1])
+    if clear_checkbox_labels:
+        _clear_checked_boxes_by_label(page, clear_checkbox_labels)
+    if select_filters:
+        _set_select_filters_by_label(page, select_filters)
     if reserves_filter_value:
         _set_reserves_filter(page, reserves_filter_value)
-    show_button = page.locator("button.el-button--primary.el-button--small").filter(has_text="Показать")
+    show_button = page.locator("button:has-text('Показать')")
+    if show_button.count() == 0:
+        show_button = page.locator("button.el-button--primary.el-button--small").filter(has_text="Показать")
     if show_button.count() == 0:
         show_button = page.locator(
             "button.el-button--primary.el-button--small:not(.input-button):has(i.el-icon-search)"
@@ -473,8 +522,18 @@ def download_report_for_month(
     page = session.page
     target_dir = ensure_dir(config.download_dir / report.export_dir)
     url = report.build_url(config.base_url.rstrip("/"), month_period)
-    export_file_name = f"{report.file_prefix}_{month_period.label}.xlsx"
-    output_path = build_output_path(config.download_dir, report.export_dir, month_period, ".xlsx", report.file_prefix)
+    if report.repeat_each_month:
+        export_file_name = f"{report.file_prefix}_{month_period.label}.xlsx"
+        output_path = build_output_path(config.download_dir, report.export_dir, month_period, ".xlsx", report.file_prefix)
+    else:
+        export_file_name = f"{report.file_prefix}.xlsx"
+        output_path = target_dir / export_file_name
+    if report_code == "account_balances":
+        export_file_name = f"acc_balance_{month_period.end:%Y-%m-%d}.xlsx"
+        output_path = target_dir / export_file_name
+    if report_code == "cons_budget":
+        export_file_name = "cons_budget.xlsx"
+        output_path = target_dir / export_file_name
     # Reports with use_export_marker=True open a filename popover after clicking export;
     # we fill it with "{file_prefix}_{YYYY-MM}" and then download via the history panel.
     export_marker = f"{report.file_prefix}_{month_period.label}" if report.use_export_marker else None
@@ -482,10 +541,15 @@ def download_report_for_month(
     for attempt in range(1, 4):
         try:
             log_result(report_code, month_period, "started")
-            existing = existing_output_paths(config.download_dir, report.export_dir, month_period)
+            existing = (
+                existing_output_paths(config.download_dir, report.export_dir, month_period)
+                if report.repeat_each_month
+                else ([output_path] if output_path.exists() else [])
+            )
             if existing and not config.overwrite:
-                log_result(report_code, month_period, "skipped", f"exists -> {existing[0]}")
-                return DownloadResult(True, existing[0])
+                if report_code != "cons_budget":
+                    log_result(report_code, month_period, "skipped", f"exists -> {existing[0]}")
+                    return DownloadResult(True, existing[0])
             logger.info("%s | %s | opening -> %s", report_code, month_period.label, url)
             _step("page open start")
             page.goto(url, wait_until="domcontentloaded")
@@ -505,8 +569,12 @@ def download_report_for_month(
                     report.reserves_filter_value,
                     payment_date=payment_date,
                     date_filter_label=report.date_filter_label,
+                    clear_checkbox_labels=report.clear_checkbox_labels,
+                    select_filters=report.select_filters,
                 )
                 _step("apply search done")
+                if report_code == "account_balances":
+                    page.wait_for_timeout(5000)
             if report.export_endpoint:
                 base_url = config.base_url.rstrip("/")
                 if not page.url.startswith(base_url):

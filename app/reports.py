@@ -35,6 +35,8 @@ class ReportDefinition:
     repeat_each_month: bool = True
     file_prefix: str = "raw"
     wait_after_export_ms: int = 5000
+    clear_checkbox_labels: tuple[str, ...] = ()
+    select_filters: tuple[tuple[str, str], ...] = ()
 
 
 def month_start_end(period: MonthPeriod) -> tuple[str, str]:
@@ -58,7 +60,7 @@ def _build_dds_expenses_url(base_url: str, period: MonthPeriod) -> str:
         f"&interval%5B0%5D={start}&interval%5B1%5D={end}"
         "&level=3&reportType=by_month"
         "&excludeIntraCompany=1&excludeFounder=1&excludeBilling=1&excludeFinancialAgent=1"
-        "&excludeReserve=2&isGroupsCollapsed=false&reportCurrencyId=5"
+        "&excludeReserve=1&isGroupsCollapsed=false&reportCurrencyId=5"
     )
 
 
@@ -91,6 +93,14 @@ def _build_budget_rows_url(base_url: str, period: MonthPeriod) -> str:
     )
 
 
+def _build_cons_budget_url(base_url: str, period: MonthPeriod) -> str:
+    return (
+        f"{base_url}/budgeting/reports/consolidated_plan_fact_monthly_report?"
+        "statuses%5B0%5D=7&statuses%5B1%5D=2&statuses%5B2%5D=6&statuses%5B3%5D=5&statuses%5B4%5D=3"
+        "&level=3&excludeIntraCompany=1&reportCurrencyId=5&reportType=by_month"
+    )
+
+
 def _build_contractors_url(base_url: str, period: MonthPeriod) -> str:
     return f"{base_url}/dictionary/contractors?all=false&archived=0&deleted=0&group_id=0"
 
@@ -115,13 +125,12 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         file_prefix="demands",
     ),
     "dds_expenses": ReportDefinition(
-        "dds_expenses", "/budgeting/reports/plan_fact_bdds_report", _build_dds_expenses_url, "dds",
+        "dds_expenses", "/budgeting/reports/plan_fact_bdds_report", _build_dds_expenses_url, "p-fact",
         apply_search_before_export=True,
         pre_search_wait_ms=2000,
         search_done_selector=None,
-        export_via_history=True,
         reserves_filter_value="исключить",
-        file_prefix="dds",
+        file_prefix="p-fact",
         wait_after_export_ms=3000,
     ),
     "dds": ReportDefinition(
@@ -152,6 +161,25 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         file_prefix="raw",
         wait_after_export_ms=5000,
     ),
+    "cons_budget": ReportDefinition(
+        "cons_budget",
+        "/budgeting/reports/consolidated_plan_fact_monthly_report",
+        _build_cons_budget_url,
+        "cons_budget",
+        apply_search_before_export=True,
+        pre_search_wait_ms=2000,
+        search_done_selector=None,
+        payment_date_filter=True,
+        date_filter_label="Период",
+        repeat_each_month=False,
+        file_prefix="cons_budget",
+        clear_checkbox_labels=(
+            "Отображать отклонения",
+            "План|факт / IN-OUT(текущий)",
+            "План|факт / IN-OUT(предыдущий)",
+        ),
+        select_filters=(("Проекты", "Azp_admin"), ("ВГО", "исключить")),
+    ),
     "contractors": ReportDefinition(
         "contractors",
         "/dictionary/contractors",
@@ -159,13 +187,13 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         "contractors",
         "/api/resources/contractor/export",
         repeat_each_month=False,
+        file_prefix="contractors",
     ),
     "account_balances": ReportDefinition(
         "account_balances",
         "/ledger/reports/account_balance_report",
         _build_account_balances_url,
         "account_balances",
-        "/api/resources/account_balance_report/export",
         apply_search_before_export=True,
     ),
 }

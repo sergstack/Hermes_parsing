@@ -3,12 +3,14 @@ from datetime import date
 import pytest
 
 from app.dates import build_months_range_until_year_end, MonthPeriod
+from app.main import build_cons_budget_period
 from app.reports import (
     REPORT_DEFINITIONS,
     _build_account_balances_url,
     _build_applications_url,
     _build_bank_cashbox_url,
     _build_budget_rows_url,
+    _build_cons_budget_url,
     _build_contractors_url,
     _build_dds_expenses_url,
 )
@@ -23,7 +25,7 @@ from app.reports import (
         ),
         (
             _build_dds_expenses_url,
-            "https://herm.finance/budgeting/reports/plan_fact_bdds_report?statuses%5B0%5D=2&statuses%5B1%5D=6&statuses%5B2%5D=7&statuses%5B3%5D=5&statuses%5B4%5D=3&interval%5B0%5D=2026-03-01&interval%5B1%5D=2026-03-31&level=3&reportType=by_month&excludeIntraCompany=1&excludeFounder=1&excludeBilling=1&excludeFinancialAgent=1&excludeReserve=2&isGroupsCollapsed=false&reportCurrencyId=5",
+            "https://herm.finance/budgeting/reports/plan_fact_bdds_report?statuses%5B0%5D=2&statuses%5B1%5D=6&statuses%5B2%5D=7&statuses%5B3%5D=5&statuses%5B4%5D=3&interval%5B0%5D=2026-03-01&interval%5B1%5D=2026-03-31&level=3&reportType=by_month&excludeIntraCompany=1&excludeFounder=1&excludeBilling=1&excludeFinancialAgent=1&excludeReserve=1&isGroupsCollapsed=false&reportCurrencyId=5",
         ),
         (
             _build_bank_cashbox_url,
@@ -38,6 +40,12 @@ from app.reports import (
             "&statuses%5B0%5D=1&statuses%5B1%5D=2&statuses%5B2%5D=3"
             "&statuses%5B3%5D=5&statuses%5B4%5D=6&statuses%5B5%5D=7"
             "&all=false&archived=0&deleted=0&reportCurrencyId=5",
+        ),
+        (
+            _build_cons_budget_url,
+            "https://herm.finance/budgeting/reports/consolidated_plan_fact_monthly_report?"
+            "statuses%5B0%5D=7&statuses%5B1%5D=2&statuses%5B2%5D=6&statuses%5B3%5D=5&statuses%5B4%5D=3"
+            "&level=3&excludeIntraCompany=1&reportCurrencyId=5&reportType=by_month",
         ),
         (
             _build_contractors_url,
@@ -73,6 +81,25 @@ def test_budget_rows_no_api_endpoint():
     assert REPORT_DEFINITIONS["budget_rows"].export_endpoint is None
 
 
+def test_cons_budget_filters():
+    rd = REPORT_DEFINITIONS["cons_budget"]
+    assert rd.repeat_each_month is False
+    assert rd.date_filter_label == "Период"
+    assert rd.clear_checkbox_labels == (
+        "Отображать отклонения",
+        "План|факт / IN-OUT(текущий)",
+        "План|факт / IN-OUT(предыдущий)",
+    )
+    assert rd.select_filters == (("Проекты", "Azp_admin"), ("ВГО", "исключить"))
+
+
+def test_cons_budget_period_spans_previous_and_current_year():
+    period = build_cons_budget_period(today=date(2026, 5, 14))
+
+    assert period.start == date(2025, 1, 1)
+    assert period.end == date(2026, 12, 31)
+
+
 def test_applications_uses_export_marker():
     """applications must still use the filename-popover flow after refactor."""
     assert REPORT_DEFINITIONS["applications"].use_export_marker is True
@@ -93,11 +120,12 @@ def test_dds_file_prefix():
     assert REPORT_DEFINITIONS["dds"].file_prefix == "dds"
 
 
-def test_dds_expenses_renamed_to_dds():
-    """dds_expenses export must now go to 'dds' folder with 'dds' prefix."""
+def test_dds_expenses_exports_to_p_fact():
+    """dds_expenses export must go to 'p-fact' folder with 'p-fact' prefix."""
     rd = REPORT_DEFINITIONS["dds_expenses"]
-    assert rd.export_dir == "dds"
-    assert rd.file_prefix == "dds"
+    assert rd.export_dir == "p-fact"
+    assert rd.file_prefix == "p-fact"
+    assert rd.export_via_history is False
 
 
 def test_dds_reserves_removed():

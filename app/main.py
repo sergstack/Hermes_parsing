@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import date
 
 from .auth import ensure_logged_in, save_session_state
 from .browser import close_browser_session
 from .config import read_config
-from .dates import build_months_range, build_months_range_until_year_end
+from .dates import MonthPeriod, build_months_range, build_months_range_until_year_end
 from .downloaders import download_report_for_month
 from .logging_utils import setup_logging
+from .paths import resolve_project_path
 from .reports import REPORT_DEFINITIONS
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,16 @@ class RunSummary:
     def __post_init__(self) -> None:
         if self.failed_reports is None:
             self.failed_reports = []
+
+
+def build_cons_budget_period(today: date | None = None) -> MonthPeriod:
+    today = today or date.today()
+    return MonthPeriod(date(today.year - 1, 1, 1), date(today.year, 12, 31))
+
+
 def main() -> int:
-    config = read_config()
-    config = config.resolved(Path.cwd())
-    setup_logging(Path("logs"))
+    config = read_config().resolved()
+    setup_logging(resolve_project_path("logs"))
 
     summary = RunSummary()
     session = ensure_logged_in(config)
@@ -39,7 +46,12 @@ def main() -> int:
 
     try:
         for report_code in REPORT_DEFINITIONS:
-            active_periods = budget_rows_periods if report_code == "budget_rows" else periods
+            if report_code == "budget_rows":
+                active_periods = budget_rows_periods
+            elif report_code == "cons_budget":
+                active_periods = [build_cons_budget_period()]
+            else:
+                active_periods = periods
             for period in active_periods:
                 if report_code == "contractors" and not config.repeat_each_month and period != active_periods[0]:
                     continue

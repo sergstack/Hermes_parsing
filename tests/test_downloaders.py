@@ -39,6 +39,7 @@ def test_applications_download_helpers_use_expected_selectors(mock_page):
     }[selector]
 
     tooltip_candidates.filter.return_value.first = tooltip
+    tooltip.count.return_value = 0
     tooltip.locator.return_value = visible_downloads
     visible_downloads.first = download_button
     mock_page.expect_download.return_value = _DownloadContext(download)
@@ -74,6 +75,8 @@ def test_apply_search_for_applications_clicks_show(mock_page):
     show_button.count.return_value = 1
 
     def locator_side_effect(selector):
+        if selector == "button:has-text('Показать')":
+            return show_button
         if selector == "button.el-button--primary.el-button--small":
             return primary_buttons
         if selector == ".dx-loadpanel-content":
@@ -99,7 +102,11 @@ def test_apply_search_for_dds_expenses_sets_exclude_reserve_before_show(mock_pag
         events.append("show")
 
     show_button.first.click.side_effect = click_show
-    mock_page.locator.side_effect = lambda selector: primary_buttons if selector == "button.el-button--primary.el-button--small" else MagicMock()
+    mock_page.locator.side_effect = lambda selector: (
+        show_button if selector == "button:has-text('Показать')"
+        else primary_buttons if selector == "button.el-button--primary.el-button--small"
+        else MagicMock()
+    )
 
     with patch("app.downloaders._set_reserves_filter", side_effect=lambda page, value: events.append(f"reserve:{value}")) as set_filter:
         _apply_search(mock_page, 15000, done_selector=None, reserves_filter_value="исключить")
@@ -159,7 +166,11 @@ def test_apply_search_for_dds_reserves_sets_only_reserve_before_show(mock_page):
         events.append("show")
 
     show_button.first.click.side_effect = click_show
-    mock_page.locator.side_effect = lambda selector: primary_buttons if selector == "button.el-button--primary.el-button--small" else MagicMock()
+    mock_page.locator.side_effect = lambda selector: (
+        show_button if selector == "button:has-text('Показать')"
+        else primary_buttons if selector == "button.el-button--primary.el-button--small"
+        else MagicMock()
+    )
 
     with patch("app.downloaders._set_reserves_filter", side_effect=lambda page, value: events.append(f"reserve:{value}")) as set_filter:
         _apply_search(mock_page, 15000, done_selector=None, reserves_filter_value="только")
@@ -179,8 +190,12 @@ def test_apply_search_falls_back_when_show_button_not_found(mock_page):
     primary_buttons.filter.return_value = filtered_buttons
     filtered_buttons.count.return_value = 0
     search_candidates.count.return_value = 1
+    text_show_button = MagicMock()
+    text_show_button.count.return_value = 0
 
     def locator_side_effect(selector):
+        if selector == "button:has-text('Показать')":
+            return text_show_button
         if selector == "button.el-button--primary.el-button--small":
             return primary_buttons
         if selector == "button.el-button--primary.el-button--small:not(.input-button):has(i.el-icon-search)":

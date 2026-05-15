@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from .paths import PROJECT_ROOT, resolve_project_path
 
 
 @dataclass(frozen=True)
@@ -22,17 +23,13 @@ class AppConfig:
     repeat_each_month: bool = False
     config_path: Path | None = None
 
-    def resolved(self, project_root: Path) -> "AppConfig":
+    def resolved(self, project_root: Path = PROJECT_ROOT) -> "AppConfig":
         """Resolve relative paths against the project root."""
         return AppConfig(
             start_date=self.start_date,
             base_url=self.base_url,
-            download_dir=(project_root / self.download_dir).resolve()
-            if not self.download_dir.is_absolute()
-            else self.download_dir.resolve(),
-            session_file=(project_root / self.session_file).resolve()
-            if not self.session_file.is_absolute()
-            else self.session_file.resolve(),
+            download_dir=resolve_project_path(self.download_dir, project_root),
+            session_file=resolve_project_path(self.session_file, project_root),
             headless=self.headless,
             overwrite=self.overwrite,
             timeout_ms=self.timeout_ms,
@@ -64,7 +61,7 @@ def _parse_line(line: str) -> tuple[str, str] | None:
 def read_config(config_path: str | Path = "config/config.txt") -> AppConfig:
     """Read a minimal key=value config file."""
 
-    path = Path(config_path)
+    path = resolve_project_path(config_path)
     raw: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         parsed = _parse_line(line)
@@ -90,4 +87,3 @@ def read_config(config_path: str | Path = "config/config.txt") -> AppConfig:
         repeat_each_month=_parse_bool(raw.get("repeat_each_month", "false")),
         config_path=path.resolve(),
     )
-
