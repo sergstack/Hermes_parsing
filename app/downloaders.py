@@ -44,6 +44,38 @@ class DownloadResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class ReportOutputTarget:
+    export_file_name: str
+    output_path: Path
+    export_marker: str | None
+
+
+def resolve_report_output_target(
+    download_dir: Path,
+    report_code: str,
+    month_period: MonthPeriod,
+) -> ReportOutputTarget:
+    report = REPORT_DEFINITIONS[report_code]
+    target_dir = download_dir / report.export_dir
+    if report.repeat_each_month:
+        export_file_name = f"{report.file_prefix}_{month_period.label}.xlsx"
+        output_path = build_output_path(download_dir, report.export_dir, month_period, ".xlsx", report.file_prefix)
+    else:
+        export_file_name = f"{report.file_prefix}.xlsx"
+        output_path = target_dir / export_file_name
+
+    if report_code == "account_balances":
+        export_file_name = f"acc_balance_{month_period.end:%Y-%m-%d}.xlsx"
+        output_path = target_dir / export_file_name
+    if report_code == "cons_budget":
+        export_file_name = "cons_budget.xlsx"
+        output_path = target_dir / export_file_name
+
+    export_marker = f"{report.file_prefix}_{month_period.label}" if report.use_export_marker else None
+    return ReportOutputTarget(export_file_name, output_path, export_marker)
+
+
 def _click_export(page: Page) -> None:
     click_export(page)
 
@@ -419,21 +451,11 @@ def download_report_for_month(
     page = session.page
     target_dir = ensure_dir(config.download_dir / report.export_dir)
     url = report.build_url(config.base_url.rstrip("/"), month_period)
-    if report.repeat_each_month:
-        export_file_name = f"{report.file_prefix}_{month_period.label}.xlsx"
-        output_path = build_output_path(config.download_dir, report.export_dir, month_period, ".xlsx", report.file_prefix)
-    else:
-        export_file_name = f"{report.file_prefix}.xlsx"
-        output_path = target_dir / export_file_name
-    if report_code == "account_balances":
-        export_file_name = f"acc_balance_{month_period.end:%Y-%m-%d}.xlsx"
-        output_path = target_dir / export_file_name
-    if report_code == "cons_budget":
-        export_file_name = "cons_budget.xlsx"
-        output_path = target_dir / export_file_name
-    # Reports with use_export_marker=True open a filename popover after clicking export;
-    # we fill it with "{file_prefix}_{YYYY-MM}" and then download via the history panel.
-    export_marker = f"{report.file_prefix}_{month_period.label}" if report.use_export_marker else None
+    output_target = resolve_report_output_target(config.download_dir, report_code, month_period)
+    export_file_name = output_target.export_file_name
+    output_path = output_target.output_path
+    # Reports with use_export_marker=True open a filename popover after clicking export.
+    export_marker = output_target.export_marker
 
     for attempt in range(1, 4):
         try:

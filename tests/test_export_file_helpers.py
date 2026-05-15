@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date
 from unittest.mock import MagicMock
 
 from app.downloaders import (
@@ -7,7 +8,9 @@ from app.downloaders import (
     _move_download,
     _poll_ready_export_row,
     _save_export_bytes,
+    resolve_report_output_target,
 )
+from app.dates import MonthPeriod
 
 
 def test_determine_extension_uses_filename_suffix():
@@ -78,3 +81,32 @@ def test_poll_ready_export_row_selects_newest_matching_ready_row(mock_session):
 
     assert selected["id"] == 102
     load_rows.assert_called_once_with(mock_session, "https://herm.finance")
+
+
+def test_resolve_report_output_target_for_monthly_marker_report(tmp_path):
+    period = MonthPeriod(date(2026, 3, 1), date(2026, 3, 31))
+
+    target = resolve_report_output_target(tmp_path, "applications", period)
+
+    assert target.export_file_name == "demands_2026-03.xlsx"
+    assert target.output_path == tmp_path / "demands" / "demands_2026-03.xlsx"
+    assert target.export_marker == "demands_2026-03"
+
+
+def test_resolve_report_output_target_for_single_report(tmp_path):
+    period = MonthPeriod(date(2026, 3, 1), date(2026, 3, 31))
+
+    target = resolve_report_output_target(tmp_path, "contractors", period)
+
+    assert target.export_file_name == "contractors.xlsx"
+    assert target.output_path == tmp_path / "contractors" / "contractors.xlsx"
+    assert target.export_marker is None
+
+
+def test_resolve_report_output_target_for_account_balances_uses_period_end(tmp_path):
+    period = MonthPeriod(date(2026, 3, 1), date(2026, 3, 31))
+
+    target = resolve_report_output_target(tmp_path, "account_balances", period)
+
+    assert target.export_file_name == "acc_balance_2026-03-31.xlsx"
+    assert target.output_path == tmp_path / "account_balances" / "acc_balance_2026-03-31.xlsx"

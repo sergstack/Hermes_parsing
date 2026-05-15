@@ -35,19 +35,15 @@ def main() -> int:
                 if report_code == "contractors" and not config.repeat_each_month and period != active_periods[0]:
                     continue
                 result = download_report_for_month(session, config, report_code, period)
-                if result.success:
-                    summary.success_count += 1
-                else:
-                    summary.error_count += 1
-                    summary.failed_reports.append(f"{report_code}:{period.label}")
+                summary.record_result(report_code, period, result)
         logger.info(
             "summary | success=%s | error=%s | failed=%s",
             summary.success_count,
             summary.error_count,
-            ", ".join(summary.failed_reports) if summary.failed_reports else "none",
+            summary.failed_label,
         )
         save_session_state(session, config.session_file)
-        return 0 if summary.error_count == 0 else 1
+        return summary.exit_code()
     finally:
         close_browser_session(session)
 

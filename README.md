@@ -49,6 +49,13 @@ config/config.txt
 - Treat `exports/` as raw source material for downstream analytics, not as Mart output.
 - If downstream Mart or analytics work is needed, create a separate SPEC before implementation.
 
+## Refactor status and validation
+
+- `POST_REFACTOR_STATUS.md` — current safe offline refactor status and production-readiness classification.
+- `OFFLINE_SMOKE.md` — safe smoke command that does not run the live exporter.
+- `LIVE_VALIDATION_PLAN.md` — operator-only live validation plan; Codex must not run it without explicit approval.
+- `CODEX_REFACTOR_FINAL_REPORT.md` — evidence report for the safe refactor iteration.
+
 ## Future Mart / analytics layer
 
 Planning artifacts may describe a future analytics layer, but that layer is not currently implemented unless matching `src/pipeline/...` and `data/...` folders exist.
