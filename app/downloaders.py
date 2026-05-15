@@ -3,21 +3,34 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
 from typing import Callable
-from urllib.parse import urlparse
 import signal
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from .browser import BrowserSession, ensure_parent_dir
+from .browser import BrowserSession
 from .config import AppConfig
 from .dates import MonthPeriod
+from .export_history import (
+    candidate_export_names as _candidate_export_names,
+    poll_ready_export_row,
+    wait_for_export_ready_by_name,
+)
+from .export_flows import (
+    click_export,
+    download_first_exported_file,
+    enter_export_marker,
+)
+from .output_writer import (
+    determine_extension as _determine_extension,
+    move_download as _move_download,
+    save_export_bytes as _save_export_bytes,
+)
 from .paths import build_output_path, ensure_dir, existing_output_paths, normalize_download_name
 from .reports import REPORT_DEFINITIONS
 
@@ -32,39 +45,11 @@ class DownloadResult:
 
 
 def _click_export(page: Page) -> None:
-    try:
-        page.get_by_role("button", name="Экспортировать всё").click(timeout=5000)
-        return
-    except Exception:  # noqa: BLE001
-        pass
-    candidates = [
-        "div.dx-datagrid-export-button[aria-label='Экспортировать всё']",
-        ".dx-datagrid-export-button",
-        "[aria-label='Экспортировать всё']",
-        "[title='Экспортировать всё']",
-        "button:has-text('Скачать')",
-        "button:has-text('Export')",
-        "button:has-text('Экспорт')",
-        "[data-testid*='export']",
-        "a:has-text('Export')",
-        "a:has-text('Экспорт')",
-        "a:has-text('Скачать')",
-    ]
-    last_error: Exception | None = None
-    for selector in candidates:
-        try:
-            page.locator(selector).first.click(timeout=5000)
-            return
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-    raise RuntimeError("Export button not found") from last_error
+    click_export(page)
 
 
 def _enter_export_marker(page: Page, marker: str) -> None:
-    popover = page.locator(".el-popover.export-popper-class").filter(has_text="Имя файла можно изменить").first
-    popover.wait_for(state="visible", timeout=5000)
-    popover.locator("input.el-input__inner").first.fill(marker, timeout=3000)
-    popover.locator("button.el-button:has-text('Загрузить')").first.click(timeout=3000)
+    enter_export_marker(page, marker)
 
 
 def _set_reserves_filter(page: Page, value: str) -> None:
@@ -191,77 +176,7 @@ def _download_first_exported_file(page: Page, timeout_ms: int):
     Call this only after the target file is confirmed ready (via API poll or
     sufficient wait), so the newest entry at the top is always the right one.
     """
-    _step("files list start")
-    page.locator("button.files-button").click(timeout=5000)
-    files_popover = page.locator(
-        "div[role='tooltip'].el-popover.el-popper[aria-hidden='false']"
-    ).filter(has=page.locator("button.download-button")).first
-    # DevExtreme renders each row twice: once in the scrollable area (dx-hidden-cell, hidden)
-    # and once in the fixed-column overlay (visible). The first N buttons in DOM order are
-    # always the hidden duplicates, so we must skip them with :not(.dx-hidden-cell).
-    btn = files_popover.locator("td:not(.dx-hidden-cell) button.download-button").first
-    btn.wait_for(state="visible", timeout=timeout_ms)
-    _step("files list done")
-    with page.expect_download(timeout=timeout_ms) as download_info:
-        _step("file download start")
-        btn.click(timeout=5000)
-    _step("file download done")
-    return download_info.value
-
-
-def _wait_for_export_ready_by_name(
-    session: BrowserSession,
-    base_url: str,
-    expected_name: str,
-    timeout_ms: int,
-    min_id: int = 0,
-) -> None:
-    """Poll /api/resources/export-file/all until a row whose name contains
-    *expected_name* appears with status 'ready' and id > min_id.
-
-    Raises RuntimeError on timeout.  Used before opening the history panel so we
-    always click the correct (newly created) file and not a stale older one.
-    """
-    poll_interval_ms = 3000
-    waited_ms = 0
-    while waited_ms <= timeout_ms:
-        rows = _load_export_rows(session, base_url)
-        for row in rows:
-            row_id = int(row.get("id", 0))
-            if row_id <= min_id:
-                continue
-            name = row.get("original_file_name") or row.get("file_name") or ""
-            status = row.get("status_id", "")
-            if expected_name in name:
-                logger.info("download | api-poll | '%s' status=%s id=%s", name, status, row_id)
-                if status == "ready":
-                    _step(f"api-poll ready: {name}")
-                    return
-                if status == "fail":
-                    raise RuntimeError(f"Export '{name}' failed on server (status=fail)")
-        logger.info("download | api-poll | '%s' not ready yet, waited %sms", expected_name, waited_ms)
-        session.page.wait_for_timeout(poll_interval_ms)
-        waited_ms += poll_interval_ms
-    raise RuntimeError(f"Export '{expected_name}' did not become ready within {timeout_ms}ms")
-
-
-def _determine_extension(downloaded_name: str, url: str | None = None) -> str:
-    parsed = Path(downloaded_name)
-    if parsed.suffix:
-        return parsed.suffix
-    if url:
-        suffix = Path(urlparse(url).path).suffix
-        if suffix:
-            return suffix
-    # TODO: confirm the actual export extension when Herm Finance does not provide one.
-    return ".bin"
-
-
-def _move_download(download_path: Path, output_path: Path) -> None:
-    ensure_parent_dir(output_path)
-    if output_path.exists():
-        output_path.unlink()
-    shutil.move(str(download_path), str(output_path))
+    return download_first_exported_file(page, timeout_ms, _step)
 
 
 def _request_json(session: BrowserSession, method: str, url: str, payload: dict | None = None) -> dict:
@@ -347,6 +262,27 @@ def _step(label: str) -> None:
     logger.info(message)
 
 
+def _wait_for_export_ready_by_name(
+    session: BrowserSession,
+    base_url: str,
+    expected_name: str,
+    timeout_ms: int,
+    min_id: int = 0,
+) -> None:
+    """Poll export history until the named newly created export is ready."""
+    wait_for_export_ready_by_name(
+        session,
+        base_url,
+        expected_name,
+        timeout_ms,
+        _load_export_rows,
+        session.page.wait_for_timeout,
+        min_id,
+        logger.info,
+        _step,
+    )
+
+
 class _StageTimeout(Exception):
     def __init__(self, stage: str) -> None:
         super().__init__(stage)
@@ -366,20 +302,6 @@ def _run_with_timeout(stage: str, timeout_ms: int, fn: Callable[[], Path | dict 
         signal.signal(signal.SIGALRM, previous)
 
 
-def _candidate_export_names(file_name: str, extra_name: str | None = None) -> list[str]:
-    stem = Path(file_name).stem
-    names: list[str] = []
-    if extra_name:
-        names.append(extra_name)
-    parts = stem.rsplit("_", 1)
-    if len(parts) == 2 and len(parts[1]) == 7 and parts[1][4] == "-":
-        period = parts[1]
-        names.extend([file_name, f"{period}-01.xlsx", f"{period}.xlsx"])
-        return names
-    names.append(file_name)
-    return names
-
-
 def _poll_ready_export_row(
     session: BrowserSession,
     base_url: str,
@@ -387,48 +309,23 @@ def _poll_ready_export_row(
     timeout_ms: int,
     min_row_id: int | None = None,
     extra_name: str | None = None,
+    load_rows: Callable[[BrowserSession, str], list[dict]] = _load_export_rows,
 ) -> dict:
-    candidates = set(_candidate_export_names(file_name, extra_name))
-    deadline = timeout_ms / 1000
-    waited = 0.0
-    while waited <= deadline:
-        _step("fetch export rows start")
-        rows = _load_export_rows(session, base_url)
-        _step("fetch export rows done")
-        ready_rows = [
-            row
-            for row in rows
-            if row.get("status_id") == "ready"
-            and (min_row_id is None or int(row.get("id", 0)) > min_row_id)
-            and (
-                row.get("original_file_name") in candidates
-                or row.get("file_name") in candidates
-            )
-        ]
-        if ready_rows:
-            ready_rows.sort(key=lambda row: row.get("id", 0), reverse=True)
-            _step("row selected")
-            return ready_rows[0]
-        _step("no row")
-        sleep(1)
-        waited += 1
-    raise RuntimeError(f"Ready export row not found for {file_name}")
+    return poll_ready_export_row(
+        session,
+        base_url,
+        file_name,
+        timeout_ms,
+        load_rows,
+        min_row_id,
+        extra_name,
+        _step,
+    )
 
 
 def _download_export_file(session: BrowserSession, base_url: str, file_id: str | int) -> tuple[bytes, str]:
     body, headers = _request_bytes(session, "POST", f"{base_url}/api/export_files/download/{file_id}")
     return body, headers.get("content-disposition", "")
-
-
-def _save_export_bytes(output_path: Path, data: bytes, disposition: str) -> Path:
-    suggested = normalize_download_name(disposition.split("filename=")[-1].strip('\"; ') if "filename=" in disposition else output_path.name)
-    ext = _determine_extension(suggested)
-    final_path = output_path.with_suffix(ext)
-    ensure_parent_dir(final_path)
-    final_path.write_bytes(data)
-    if final_path.stat().st_size == 0:
-        raise RuntimeError("Downloaded file is empty")
-    return final_path
 
 
 def _trigger_export_with_marker(page: Page, marker: str) -> None:

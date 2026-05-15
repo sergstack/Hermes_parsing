@@ -1,0 +1,80 @@
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from app.downloaders import (
+    _candidate_export_names,
+    _determine_extension,
+    _move_download,
+    _poll_ready_export_row,
+    _save_export_bytes,
+)
+
+
+def test_determine_extension_uses_filename_suffix():
+    assert _determine_extension("report.xlsx", "https://example.test/download") == ".xlsx"
+
+
+def test_determine_extension_falls_back_to_url_suffix():
+    assert _determine_extension("download", "https://example.test/file.csv") == ".csv"
+
+
+def test_determine_extension_falls_back_to_bin():
+    assert _determine_extension("download", "https://example.test/file") == ".bin"
+
+
+def test_move_download_overwrites_existing_target(tmp_path):
+    source = tmp_path / "source.xlsx"
+    target = tmp_path / "nested" / "target.xlsx"
+    source.write_text("new", encoding="utf-8")
+    target.parent.mkdir()
+    target.write_text("old", encoding="utf-8")
+
+    _move_download(source, target)
+
+    assert not source.exists()
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_save_export_bytes_uses_content_disposition_filename(tmp_path):
+    output_path = tmp_path / "target.xlsx"
+
+    saved = _save_export_bytes(output_path, b"payload", 'attachment; filename="server.xlsx"')
+
+    assert saved == output_path
+    assert output_path.read_bytes() == b"payload"
+
+
+def test_candidate_export_names_for_monthly_file():
+    assert _candidate_export_names("raw_2026-03.xlsx") == [
+        "raw_2026-03.xlsx",
+        "2026-03-01.xlsx",
+        "2026-03.xlsx",
+    ]
+
+
+def test_candidate_export_names_includes_extra_name_first():
+    assert _candidate_export_names("contractors.xlsx", "contractors_ready.xlsx") == [
+        "contractors_ready.xlsx",
+        "contractors.xlsx",
+    ]
+
+
+def test_poll_ready_export_row_selects_newest_matching_ready_row(mock_session):
+    rows = [
+        {"id": 100, "status_id": "ready", "original_file_name": "raw_2026-03.xlsx"},
+        {"id": 101, "status_id": "pending", "original_file_name": "raw_2026-03.xlsx"},
+        {"id": 102, "status_id": "ready", "original_file_name": "2026-03.xlsx"},
+    ]
+    load_rows = MagicMock(return_value=rows)
+
+    selected = _poll_ready_export_row(
+        mock_session,
+        "https://herm.finance",
+        "raw_2026-03.xlsx",
+        timeout_ms=100,
+        min_row_id=100,
+        load_rows=load_rows,
+    )
+
+    assert selected["id"] == 102
+    load_rows.assert_called_once_with(mock_session, "https://herm.finance")

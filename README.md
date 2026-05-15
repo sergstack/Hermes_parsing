@@ -55,6 +55,18 @@ Planning artifacts may describe a future analytics layer, but that layer is not 
 
 The current exporter remains separate from any future stage/mart/report pipeline. Mart implementation, financial reconciliation, report generation, or dashboarding requires a separate scoped task.
 
+## Current code layout
+
+The exporter code is split by responsibility:
+
+- `app/main.py` — run entrypoint and high-level orchestration.
+- `app/reports.py` — report catalog, URL builders, export folders, file prefixes, and UI behavior flags.
+- `app/downloaders.py` — compatibility facade for report download flow.
+- `app/export_flows.py` — reusable Playwright export UI primitives.
+- `app/export_history.py` — export history row matching and polling helpers.
+- `app/output_writer.py` — output filename, extension, move, and byte-save helpers.
+- `app/orchestration.py` and `app/run_summary.py` — pure run-period selection and summary accounting helpers.
+
 ## Installation
 
 1. Create and activate a Python 3.11+ virtual environment.
