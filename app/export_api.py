@@ -111,7 +111,12 @@ def candidate_export_names(file_name: str, extra_name: str | None = None) -> lis
         period = parts[1]
         names.extend([file_name, f"{period}-01.xlsx", f"{period}.xlsx"])
         return names
-    if len(parts) == 2 and len(parts[1]) == 10 and parts[1][4] == "-" and parts[1][7] == "-":
+    if (
+        len(parts) == 2
+        and len(parts[1]) == 10
+        and parts[1][4] == "-"
+        and parts[1][7] == "-"
+    ):
         names.extend([file_name, f"{parts[1]}.xlsx"])
         return names
     names.append(file_name)
