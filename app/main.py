@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -25,14 +25,8 @@ logger = logging.getLogger(__name__)
 class RunSummary:
     success_count: int = 0
     error_count: int = 0
-    failed_reports: list[str] = None  # type: ignore[assignment]
-    planned_reports: list[dict] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.failed_reports is None:
-            self.failed_reports = []
-        if self.planned_reports is None:
-            self.planned_reports = []
+    failed_reports: list[str] = field(default_factory=list)
+    planned_reports: list[dict] = field(default_factory=list)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -100,7 +94,8 @@ def _build_planned_reports(config, report_codes: list[str]) -> list[dict]:
                             period,
                             ".xlsx",
                             report.file_prefix,
-                            use_end_date=report_code in {
+                            use_end_date=report_code
+                            in {
                                 "account_balances",
                                 "cons_budget",
                             },
