@@ -5,6 +5,7 @@ from app.paths import (
     build_output_path,
     existing_output_paths,
     normalize_download_name,
+    resolve_project_path,
 )
 
 
@@ -12,6 +13,16 @@ def test_build_output_directory_returns_report_folder():
     assert build_output_directory(Path("/tmp/exports"), "dds") == Path(
         "/tmp/exports/dds"
     )
+
+
+def test_resolve_project_path_uses_explicit_root_for_relative_paths(tmp_path):
+    assert resolve_project_path("exports", tmp_path) == (tmp_path / "exports").resolve()
+
+
+def test_resolve_project_path_preserves_absolute_paths(tmp_path):
+    absolute = (tmp_path / "exports").resolve()
+
+    assert resolve_project_path(absolute, Path("/other/root")) == absolute
 
 
 def test_build_output_path_uses_prefix_and_suffix(sample_period):

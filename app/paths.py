@@ -7,6 +7,17 @@ from pathlib import Path
 from .dates import MonthPeriod
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_project_path(path: str | Path, project_root: Path = PROJECT_ROOT) -> Path:
+    """Resolve a repository-relative runtime path without depending on shell cwd."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (project_root / candidate).resolve()
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
