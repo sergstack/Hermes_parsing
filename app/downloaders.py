@@ -15,6 +15,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from .browser import BrowserSession
 from .config import AppConfig
 from .dates import MonthPeriod
+from .errors import ExportErrorCode
 from .export_api import (
     load_export_rows as _load_export_rows,
     download_export_file as _download_export_file,
@@ -61,6 +62,9 @@ class DownloadResult:
     success: bool
     output_path: Path | None
     error: str | None = None
+    error_code: str | None = None
+    error_stage: str | None = None
+    error_message: str | None = None
 
 
 def _click_export(page: Page) -> None:
@@ -477,6 +481,40 @@ def log_result(
     logger.info("%s | %s | %s%s", report_code, label, status, suffix)
 
 
+def _timeout_code_for_stage(stage: str) -> ExportErrorCode:
+    if stage == "page_open":
+        return ExportErrorCode.PAGE_OPEN_TIMEOUT
+    if stage == "apply_search":
+        return ExportErrorCode.SEARCH_APPLY_FAILED
+    if stage == "trigger":
+        return ExportErrorCode.EXPORT_TRIGGER_FAILED
+    if stage in {"status", "export_rows", "marker_history"}:
+        return ExportErrorCode.EXPORT_ROW_TIMEOUT
+    if stage == "history":
+        return ExportErrorCode.EXPORT_HISTORY_STALE
+    if stage in {"direct", "download", "api"}:
+        return ExportErrorCode.DOWNLOAD_TIMEOUT
+    return ExportErrorCode.UNKNOWN
+
+
+def _error_code_for_exception(exc: Exception, stage: str) -> ExportErrorCode:
+    if isinstance(exc, _StageTimeout):
+        return _timeout_code_for_stage(exc.stage)
+    if isinstance(exc, PlaywrightTimeoutError):
+        return _timeout_code_for_stage(stage)
+    if isinstance(exc, PlaywrightError):
+        return ExportErrorCode.PLAYWRIGHT_ERROR
+
+    message = str(exc)
+    if "Export button not found" in message:
+        return ExportErrorCode.EXPORT_BUTTON_NOT_FOUND
+    if "Export history did not refresh" in message:
+        return ExportErrorCode.EXPORT_HISTORY_STALE
+    if "Downloaded file is empty" in message:
+        return ExportErrorCode.EMPTY_FILE
+    return ExportErrorCode.UNKNOWN
+
+
 def _select_download_strategy(report) -> str:
     if report.export_endpoint:
         return "api"
@@ -662,6 +700,7 @@ def download_report_for_month(
         )
 
     for attempt in range(1, 4):
+        current_stage = "start"
         try:
             log_result(report_code, month_period, "started")
             existing = existing_output_paths(
@@ -677,10 +716,12 @@ def download_report_for_month(
                 )
                 return DownloadResult(True, existing[0])
             logger.info("%s | %s | opening -> %s", report_code, month_period.label, url)
+            current_stage = "page_open"
             _step("page open start")
             page.goto(url, wait_until="domcontentloaded")
             _step("page open done")
             if report.apply_search_before_export:
+                current_stage = "apply_search"
                 _step("apply search start")
                 # herm.finance date-range picker uses DD.MM.YY (two-digit year).
                 payment_date = (
@@ -705,6 +746,7 @@ def download_report_for_month(
                 )
                 _step("apply search done")
             strategy = _select_download_strategy(report)
+            current_stage = strategy
             if strategy == "api":
                 saved_path = _download_via_api_export(
                     session,
@@ -747,20 +789,40 @@ def download_report_for_month(
                 "%s | %s | timeout attempt %s", report_code, month_period.label, attempt
             )
             last_error = f"timeout: {exc}"
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = current_stage
         except PlaywrightError as exc:
             last_error = f"playwright error: {exc}"
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = current_stage
         except _StageTimeout as exc:
             last_error = f"timeout stage: {exc.stage}"
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = exc.stage
         except Exception as exc:  # noqa: BLE001
             last_error = str(exc)
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = current_stage
 
         if attempt < 3:
             sleep(2 * attempt)
             continue
         contextual_error = f"{report_code}:{month_period.label}:{last_error}"
         log_result(report_code, month_period, "error", contextual_error)
-        return DownloadResult(False, None, contextual_error)
+        return DownloadResult(
+            False,
+            None,
+            contextual_error,
+            last_error_code.value,
+            last_error_stage,
+            last_error,
+        )
 
     return DownloadResult(
-        False, None, f"{report_code}:{month_period.label}:unknown error"
+        False,
+        None,
+        f"{report_code}:{month_period.label}:unknown error",
+        ExportErrorCode.UNKNOWN.value,
+        "unknown",
+        "unknown error",
     )

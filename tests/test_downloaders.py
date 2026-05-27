@@ -657,3 +657,92 @@ def test_contractors_stale_monthly_file_cleanup_is_preserved(tmp_path, mock_sess
     assert result.success is True
     assert not stale.exists()
     helper.assert_called_once()
+
+
+def test_stage_timeout_maps_to_stable_error_code(tmp_path, mock_session):
+    from app.downloaders import _StageTimeout, download_report_for_month
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch("app.downloaders.sleep"),
+        patch(
+            "app.downloaders._download_via_history",
+            side_effect=_StageTimeout("export_rows"),
+        ),
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error_code == "export_row_timeout"
+    assert result.error_stage == "export_rows"
+    assert result.error_message == "timeout stage: export_rows"
+
+
+def test_playwright_error_maps_to_stable_error_code(tmp_path, mock_session):
+    from playwright.sync_api import Error as PlaywrightError
+
+    from app.downloaders import download_report_for_month
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch("app.downloaders.sleep"),
+        patch(
+            "app.downloaders._download_via_history",
+            side_effect=PlaywrightError("browser closed"),
+        ),
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error_code == "playwright_error"
+    assert result.error_stage == "history"
+    assert result.error_message == "playwright error: browser closed"
+
+
+def test_unknown_exception_maps_to_unknown_error_code(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch("app.downloaders.sleep"),
+        patch(
+            "app.downloaders._download_via_history",
+            side_effect=ValueError("unexpected failure"),
+        ),
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error_code == "unknown"
+    assert result.error_stage == "history"
+    assert result.error_message == "unexpected failure"
+
+
+def test_download_result_keeps_backward_compatible_error_string(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch("app.downloaders.sleep"),
+        patch(
+            "app.downloaders._download_via_history",
+            side_effect=RuntimeError("Downloaded file is empty"),
+        ),
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is False
+    assert result.error == "dds_expenses:2025-01:Downloaded file is empty"
+    assert result.error_code == "empty_file"
+    assert result.error_message == "Downloaded file is empty"
