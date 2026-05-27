@@ -72,3 +72,22 @@ def test_normalize_config_resolves_relative_paths(tmp_path):
 
     assert normalized.download_dir == (tmp_path / "exports").resolve()
     assert normalized.session_file == (tmp_path / "state/session.json").resolve()
+
+
+def test_normalize_config_infers_root_from_config_folder(tmp_path):
+    config = AppConfig(
+        start_date="2026-03-01",
+        base_url="https://herm.finance",
+        download_dir=Path("exports"),
+        session_file=Path("state/session.json"),
+        headless=False,
+        overwrite=True,
+        timeout_ms=60000,
+        slow_mo=0,
+        config_path=tmp_path / "config" / "config.txt",
+    )
+
+    normalized = normalize_config(config)
+
+    assert normalized.download_dir == (tmp_path / "exports").resolve()
+    assert normalized.session_file == (tmp_path / "state/session.json").resolve()

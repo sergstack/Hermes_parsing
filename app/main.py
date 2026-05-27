@@ -176,7 +176,7 @@ def _run_dry_run(config, report_codes: list[str]) -> int:
 
 def main() -> int:
     args = _parse_args()
-    config = normalize_config(read_config(args.config), Path.cwd())
+    config = normalize_config(read_config(args.config))
     config = _apply_overrides(config, args)
     setup_logging(Path("logs"))
     report_codes = _selected_reports(args.reports)
