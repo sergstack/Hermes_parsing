@@ -53,6 +53,7 @@ from .paths import (
     normalize_download_name,
 )
 from .reports import REPORT_DEFINITIONS
+from .retry import RetryPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -700,7 +701,8 @@ def download_report_for_month(
             else report.file_prefix
         )
 
-    for attempt in range(1, 4):
+    retry_policy = RetryPolicy()
+    for attempt in range(1, retry_policy.max_attempts + 1):
         current_stage = "start"
         try:
             log_result(report_code, month_period, "started")
@@ -805,8 +807,8 @@ def download_report_for_month(
             last_error_code = _error_code_for_exception(exc, current_stage)
             last_error_stage = current_stage
 
-        if attempt < 3:
-            sleep(2 * attempt)
+        if retry_policy.should_retry(last_error_code.value, attempt):
+            sleep(retry_policy.sleep_seconds(attempt))
             continue
         contextual_error = f"{report_code}:{month_period.label}:{last_error}"
         log_result(report_code, month_period, "error", contextual_error)

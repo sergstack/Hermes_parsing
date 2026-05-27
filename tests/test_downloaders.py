@@ -746,3 +746,47 @@ def test_download_result_keeps_backward_compatible_error_string(tmp_path, mock_s
     assert result.error == "dds_expenses:2025-01:Downloaded file is empty"
     assert result.error_code == "empty_file"
     assert result.error_message == "Downloaded file is empty"
+
+
+def test_retryable_error_uses_existing_three_attempt_flow(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch("app.downloaders.sleep") as sleep_mock,
+        patch(
+            "app.downloaders._download_via_history",
+            side_effect=RuntimeError("Downloaded file is empty"),
+        ) as helper,
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is False
+    assert result.error_code == "empty_file"
+    assert result.attempts == 3
+    assert helper.call_count == 3
+    assert [call.args[0] for call in sleep_mock.call_args_list] == [2.0, 4.0]
+
+
+def test_non_retryable_error_stops_without_sleep(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch("app.downloaders.sleep") as sleep_mock,
+        patch(
+            "app.downloaders._download_via_history",
+            side_effect=RuntimeError("Export button not found"),
+        ) as helper,
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is False
+    assert result.error_code == "export_button_not_found"
+    assert result.attempts == 1
+    assert helper.call_count == 1
+    sleep_mock.assert_not_called()
