@@ -384,11 +384,11 @@ def test_move_latest_download_moves_newest_xlsx(tmp_path):
     downloads_dir.mkdir()
     old_file = downloads_dir / "old.xlsx"
     new_file = downloads_dir / "new.xlsx"
-    old_file.write_text("old", encoding="utf-8")
-    new_file.write_text("new", encoding="utf-8")
+    old_file.write_bytes(b"PK-old")
+    new_file.write_bytes(b"PK-new")
     old_mtime = old_file.stat().st_mtime
     new_file.touch()
-    new_file.write_text("newer", encoding="utf-8")
+    new_file.write_bytes(b"PK-newer")
     assert old_mtime <= new_file.stat().st_mtime
 
     output_path = (
@@ -398,7 +398,7 @@ def test_move_latest_download_moves_newest_xlsx(tmp_path):
 
     assert moved == output_path
     assert output_path.exists()
-    assert output_path.read_text(encoding="utf-8") == "newer"
+    assert output_path.read_bytes() == b"PK-newer"
 
 
 def test_move_latest_download_since_uses_only_new_files(tmp_path):
@@ -406,8 +406,8 @@ def test_move_latest_download_since_uses_only_new_files(tmp_path):
     downloads_dir.mkdir()
     old_file = downloads_dir / "old.xlsx"
     new_file = downloads_dir / "new.xlsx"
-    old_file.write_text("old", encoding="utf-8")
-    new_file.write_text("new", encoding="utf-8")
+    old_file.write_bytes(b"PK-old")
+    new_file.write_bytes(b"PK-new")
     known_files = {old_file}
 
     output_path = (
@@ -417,7 +417,7 @@ def test_move_latest_download_since_uses_only_new_files(tmp_path):
 
     assert moved == output_path
     assert output_path.exists()
-    assert output_path.read_text(encoding="utf-8") == "new"
+    assert output_path.read_bytes() == b"PK-new"
 
 
 def test_account_balances_uses_direct_download_after_search(mock_page):
