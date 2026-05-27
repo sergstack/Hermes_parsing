@@ -15,6 +15,8 @@
 
 - Default to dry-run and unit tests.
 - Use synthetic or mocked timing tests before live runs.
+- Use `app.experiments.ExperimentResult` for deterministic baseline/candidate
+  scoring before any live smoke is considered.
 - Tune one parameter per PR.
 - Keep report URLs, filters, selectors, and output names unchanged.
 - Record baseline and candidate metrics with the same report, period, and local
@@ -50,6 +52,7 @@ Each tuning PR must include:
 - environment notes
 - metrics file or summarized table
 - score calculation script or command
+- serialized experiment result for baseline and candidate
 - explicit rollback command
 
 Scores must use stable error codes from the exporter taxonomy rather than raw
@@ -71,6 +74,24 @@ Attempt-level fields:
 - `attempt`
 - `status`
 - `error_code`
+
+## Experiment Result Fields
+
+The pure experiment model records:
+
+- `experiment_id`
+- `report_code`
+- `period`
+- `variant`
+- `success`
+- `duration_sec`
+- `retry_count`
+- `failure_count`
+- `score`
+
+Candidate comparison must reject candidates whose success rate is worse than
+baseline or whose failure count is higher than baseline, even when duration is
+lower.
 - `stages`
 
 Stage-level fields:
