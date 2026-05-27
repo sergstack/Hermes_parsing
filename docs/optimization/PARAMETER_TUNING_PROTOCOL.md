@@ -74,6 +74,37 @@ Attempt-level fields:
 - `attempt`
 - `status`
 - `error_code`
+- `duration_sec`
+- `output_path`
+- `file_size`
+- `stages`
+
+Stage-level fields:
+
+- `stage`
+- `duration_sec`
+- `status`
+- `error_code`
+
+## Live Baseline Gate
+
+Wait and polling optimization requires an explicitly approved live-smoke
+baseline. Dry-run metrics can verify schema and plumbing, but they are not
+evidence for changing Herm Finance waits, polling intervals, timeouts, or retry
+policy.
+
+Before any optimization PR, create a baseline summary using:
+
+- `docs/experiments/live_smoke_baseline_plan.md`
+- `docs/experiments/baseline_summary_template.md`
+
+The first approved baseline must use one completed month and the minimal report
+scope:
+
+- `dds`
+- `dds_expenses`
+- `p-fact`
+- `account_balances`
 
 ## Experiment Result Fields
 
@@ -92,14 +123,6 @@ The pure experiment model records:
 Candidate comparison must reject candidates whose success rate is worse than
 baseline or whose failure count is higher than baseline, even when duration is
 lower.
-- `stages`
-
-Stage-level fields:
-
-- `stage`
-- `duration_sec`
-- `status`
-- `error_code`
 
 ## Acceptance Threshold
 
