@@ -495,3 +495,165 @@ def test_apply_search_falls_back_when_show_button_not_found(mock_page):
 
     search_button.first.click.assert_called_once_with(timeout=15000)
     done_locator.wait_for.assert_called_once_with(state="hidden", timeout=15000)
+
+
+def _test_config(tmp_path):
+    from pathlib import Path
+
+    from app.config import AppConfig
+
+    return AppConfig(
+        start_date="2025-01-01",
+        base_url="https://herm.finance",
+        download_dir=tmp_path / "exports",
+        session_file=Path("/tmp/session.json"),
+        headless=True,
+        overwrite=True,
+        timeout_ms=15000,
+        slow_mo=0,
+        repeat_each_month=False,
+    )
+
+
+def _test_period():
+    from datetime import date
+
+    from app.dates import MonthPeriod
+
+    return MonthPeriod(start=date(2025, 1, 1), end=date(2025, 1, 31))
+
+
+def test_api_report_dispatches_to_api_helper(tmp_path, mock_session, monkeypatch):
+    from app.downloaders import download_report_for_month
+    from app.reports import REPORT_DEFINITIONS, ReportDefinition
+
+    report = ReportDefinition(
+        code="api_test",
+        url_path="/api-test",
+        build_url=lambda base_url, period: f"{base_url}/api-test",
+        export_dir="api_test",
+        export_endpoint="/api/export",
+        file_prefix="api_test",
+    )
+    monkeypatch.setitem(REPORT_DEFINITIONS, "api_test", report)
+    output_path = tmp_path / "exports" / "api_test" / "api_test_2025-01.xlsx"
+
+    with patch(
+        "app.downloaders._download_via_api_export", return_value=output_path
+    ) as helper:
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "api_test", _test_period()
+        )
+
+    assert result.success is True
+    helper.assert_called_once()
+
+
+def test_marker_report_dispatches_to_marker_history_helper(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    output_path = tmp_path / "exports" / "demands" / "demands_2025-01.xlsx"
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch(
+            "app.downloaders._download_via_marker_history", return_value=output_path
+        ) as helper,
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "applications", _test_period()
+        )
+
+    assert result.success is True
+    helper.assert_called_once()
+
+
+def test_history_report_dispatches_to_history_helper(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    output_path = tmp_path / "exports" / "dds" / "dds_2025-01.xlsx"
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch(
+            "app.downloaders._download_via_history", return_value=output_path
+        ) as helper,
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "dds_expenses", _test_period()
+        )
+
+    assert result.success is True
+    helper.assert_called_once()
+
+
+def test_direct_report_dispatches_to_direct_browser_helper(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    output_path = (
+        tmp_path / "exports" / "account_balances" / "acc_balance_2025-01-31.xlsx"
+    )
+
+    with (
+        patch("app.downloaders._apply_search"),
+        patch(
+            "app.downloaders._download_via_direct_browser", return_value=output_path
+        ) as helper,
+    ):
+        result = download_report_for_month(
+            mock_session, _test_config(tmp_path), "account_balances", _test_period()
+        )
+
+    assert result.success is True
+    helper.assert_called_once()
+
+
+def test_existing_output_skip_happens_before_page_open(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    config = _test_config(tmp_path)
+    config = type(config)(
+        start_date=config.start_date,
+        base_url=config.base_url,
+        download_dir=config.download_dir,
+        session_file=config.session_file,
+        headless=config.headless,
+        overwrite=False,
+        timeout_ms=config.timeout_ms,
+        slow_mo=config.slow_mo,
+        repeat_each_month=config.repeat_each_month,
+    )
+    existing = config.download_dir / "dds" / "dds_2025-01.xlsx"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("old", encoding="utf-8")
+
+    with patch("app.downloaders._download_via_history") as helper:
+        result = download_report_for_month(
+            mock_session, config, "dds_expenses", _test_period()
+        )
+
+    assert result.success is True
+    assert result.output_path == existing
+    mock_session.page.goto.assert_not_called()
+    helper.assert_not_called()
+
+
+def test_contractors_stale_monthly_file_cleanup_is_preserved(tmp_path, mock_session):
+    from app.downloaders import download_report_for_month
+
+    config = _test_config(tmp_path)
+    stale = config.download_dir / "contractors" / "contractors_2025-01.xlsx"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale", encoding="utf-8")
+    output_path = config.download_dir / "contractors" / "contractors.xlsx"
+
+    with patch(
+        "app.downloaders._download_via_marker_history", return_value=output_path
+    ) as helper:
+        result = download_report_for_month(
+            mock_session, config, "contractors", _test_period()
+        )
+
+    assert result.success is True
+    assert not stale.exists()
+    helper.assert_called_once()
