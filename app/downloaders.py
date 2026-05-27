@@ -65,6 +65,7 @@ class DownloadResult:
     error_code: str | None = None
     error_stage: str | None = None
     error_message: str | None = None
+    attempts: int = 1
 
 
 def _click_export(page: Page) -> None:
@@ -714,7 +715,7 @@ def download_report_for_month(
                 log_result(
                     report_code, month_period, "skipped", f"exists -> {existing[0]}"
                 )
-                return DownloadResult(True, existing[0])
+                return DownloadResult(True, existing[0], attempts=attempt)
             logger.info("%s | %s | opening -> %s", report_code, month_period.label, url)
             current_stage = "page_open"
             _step("page open start")
@@ -783,7 +784,7 @@ def download_report_for_month(
                     output_path,
                 )
             log_result(report_code, month_period, "saved", str(saved_path))
-            return DownloadResult(True, saved_path)
+            return DownloadResult(True, saved_path, attempts=attempt)
         except PlaywrightTimeoutError as exc:
             logger.warning(
                 "%s | %s | timeout attempt %s", report_code, month_period.label, attempt
@@ -816,6 +817,7 @@ def download_report_for_month(
             last_error_code.value,
             last_error_stage,
             last_error,
+            attempt,
         )
 
     return DownloadResult(
@@ -825,4 +827,5 @@ def download_report_for_month(
         ExportErrorCode.UNKNOWN.value,
         "unknown",
         "unknown error",
+        3,
     )
