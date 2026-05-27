@@ -208,3 +208,7 @@ def test_main_normal_run_writes_failed_result_metrics(tmp_path, monkeypatch):
     assert metrics["attempts"][0]["attempt"] == 3
     assert metrics["attempts"][0]["error_code"] == "download_timeout"
     assert metrics["attempts"][0]["stages"][0]["stage"] == "download_report"
+    failure_dirs = list(Path("logs/failures").glob("*/dds_2026-03"))
+    assert len(failure_dirs) == 1
+    summary = json.loads((failure_dirs[0] / "summary.json").read_text(encoding="utf-8"))
+    assert summary["error_code"] == "download_timeout"
