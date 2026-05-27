@@ -9,7 +9,12 @@ from urllib.parse import urljoin
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .browser import BrowserSession, close_browser_session, create_browser_session, safe_base_url
+from .browser import (
+    BrowserSession,
+    close_browser_session,
+    create_browser_session,
+    safe_base_url,
+)
 from .config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -28,7 +33,6 @@ def _is_logged_in(page: Page, base_url: str) -> bool:
     page.goto(base_url, wait_until="domcontentloaded")
     content = page.content().lower()
     url = page.url.lower()
-    login_markers = ("login", "sign in", "войти", "logout", "выход")
     if "/login" in url or page.locator("input[name='email']").count() > 0:
         return False
     if any(marker in content for marker in ("logout", "выход")):
@@ -38,7 +42,9 @@ def _is_logged_in(page: Page, base_url: str) -> bool:
 
 def ensure_logged_in(config: AppConfig) -> BrowserSession:
     base_url = safe_base_url(config.base_url)
-    stored_state = config.session_file if load_session_state(config.session_file) else None
+    stored_state = (
+        config.session_file if load_session_state(config.session_file) else None
+    )
 
     if stored_state is not None:
         session = create_browser_session(config)

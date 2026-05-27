@@ -39,6 +39,16 @@ playwright install
 python -m app.main
 ```
 
+### CLI options
+
+- `--config config/config.txt` to use a different config file.
+- `--reports applications,dds` to limit the run to selected report codes.
+- `--dry-run` to plan exports without opening a browser.
+- `--headless true|false` to override the config value.
+- `--overwrite true|false` to override the config value.
+
+Dry-run writes a machine-readable plan to `logs/summary.json`.
+
 ## First login
 
 При первом запуске или если сохранённая сессия устарела — откроется видимый браузер. Войдите вручную на `https://herm.finance`, затем вернитесь в терминал и нажмите Enter. Сессия сохраняется в `session_file`.
@@ -53,12 +63,27 @@ python -m app.main
 |---|---|---|---|
 | `applications` | `demands` | `demands` | UI: кнопка «Скачать» → popover с именем файла → история выгрузок |
 | `dds_expenses` | `dds` | `dds` | UI: «Показать» → «Экспортировать всё» → история выгрузок |
+| `p-fact` | `p-fact` | `p-fact` | UI: «Показать» → «Экспортировать всё» → история выгрузок |
 | `dds` | `dds` | `dds` | UI: фильтр «Дата начисления» → кнопка поиска → «Скачать .xlsx» |
 | `budget_rows` | `budget_rows` | `raw` | UI: «Скачать .xlsx» → popover с именем файла → история выгрузок |
-| `contractors` | `contractors` | `raw` | API: POST `/api/resources/contractor/export` → polling (один раз) |
-| `account_balances` | `account_balances` | `raw` | API: POST `/api/resources/account_balance_report/export` → polling |
+| `contractors` | `contractors` | `contractors` | UI: кнопка «Скачать» → popover с именем файла → история выгрузок |
+| `account_balances` | `account_balances` | `acc_balance` | UI: «Показать» → «Скачать» → перенос свежего `.xlsx` из `Downloads` |
+| `cons_budget` | `cons_budget` | `cons_budget` | UI: полный год → «Показать» → «Экспортировать всё» → прямое скачивание |
 
-## Фильтры отчёта p-fact (dds_expenses)
+## Фильтры отчёта account_balances
+
+| Параметр | Значение |
+|---|---|
+| Дата | последняя дата месяца |
+| Отчётная валюта | EUR |
+| Нулевые остатки | исключить |
+| Заблокированные | исключить |
+| Закрытые счета | исключить |
+| Счета-кошельки | исключить |
+| Архивные счета | исключить |
+| Мои счета | выключено |
+
+## Фильтры отчёта p-fact
 
 | Параметр | Значение |
 |---|---|
@@ -70,6 +95,22 @@ python -m app.main
 
 > Дропдаун «Резервы» не подхватывает URL-параметр `excludeReserve=2` автоматически —
 > скрипт программно кликает опцию «исключить» после загрузки страницы.
+
+## Фильтры отчёта cons_budget
+
+| Параметр | Значение |
+|---|---|
+| Период | полный год из `dates_period[0]` и `dates_period[1]` |
+| Статусы | все выбранные в URL |
+| Уровень | 3 |
+| ЦФО | пусто |
+| Проекты | `Azp_admin` |
+| ВГО | исключить |
+| Отображать столбцы | `План-факт` |
+| Отображать отклонение | выключено |
+| План/факт / IN-OUT(текущий) | пусто |
+| План/факт / IN-OUT(предыдущий) | пусто |
+| Отчётная валюта | EUR |
 
 ## Методы выгрузки
 
@@ -118,6 +159,24 @@ python -m app.main
 > относится к полю «Банковский счет» и открывает модальное окно «Банковские счета».
 > Для запуска поиска нужно нажимать кнопку формы фильтров, а не `input-button search-button`.
 
+### Прямое скачивание (`account_balances`)
+
+1. Открыть страницу отчёта с фильтрами периода.
+2. Установить дату на последний день месяца и применить фильтры.
+3. Нажать «Показать».
+4. Нажать «Скачать» и дождаться появления свежего `.xlsx` в `~/Downloads`.
+5. Переместить найденный файл в `./exports/account_balances/` и переименовать его в `acc_balance_YYYY-MM-DD.xlsx`.
+
+### UI-метод с прямым скачиванием (`cons_budget`)
+
+Применяется для отчёта «План-факт по конс. бюджету (за период)».
+
+1. Открыть страницу отчёта с полным годовым периодом и фильтрами из URL.
+2. Подождать 2 секунды, чтобы страница применила параметры.
+3. Нажать «Показать» — ждать `networkidle`.
+4. Нажать кнопку «Экспортировать всё».
+5. Дождаться появления браузерной загрузки и сохранить файл напрямую.
+
 ### API-метод (остальные отчёты)
 
 1. Открыть нужную страницу отчёта (устанавливает cookies/контекст).
@@ -137,3 +196,9 @@ python -m app.main
   находит готовый файл в `/api/resources/export-file/all`.
 - `contractors` скачивается один раз за весь прогон (не повторяется помесячно),
   т.к. справочник не зависит от периода.
+- `account_balances` скачивается через кнопку «Скачать» и сохраняется как
+  `acc_balance_YYYY-MM-DD.xlsx`, где дата в имени файла соответствует
+  последнему дню месяца.
+- `cons_budget` скачивается через кнопку «Экспортировать всё» и сохраняется как
+  `cons_budget.xlsx` в `exports/cons_budget/`.
+- `logs/summary.json` is written after dry-run and after a normal run.

@@ -3,22 +3,54 @@
 from __future__ import annotations
 
 import logging
-import shutil
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
 from typing import Callable
-from urllib.parse import urlparse
 import signal
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from .browser import BrowserSession, ensure_parent_dir
+from .browser import BrowserSession
 from .config import AppConfig
 from .dates import MonthPeriod
-from .paths import build_output_path, ensure_dir, existing_output_paths, normalize_download_name
+from .export_api import (
+    load_export_rows as _load_export_rows,
+    download_export_file as _download_export_file,
+    poll_ready_export_row as _poll_ready_export_row,
+    request_json as _request_json,
+    step as _step,
+    trigger_async_export as _trigger_async_export,
+)
+from .export_files import (
+    determine_extension as _determine_extension,
+    move_latest_download as _move_latest_download,
+    move_download as _move_download,
+    save_export_bytes as _save_export_bytes,
+)
+from .selectors import (
+    DOWNLOAD_BUTTON_SELECTOR,
+    EXPORT_BUTTON_SELECTORS,
+    EXPORT_POPOVER_SELECTOR,
+    EXPORT_POPUP_INPUT_SELECTOR,
+    EXPORT_POPUP_UPLOAD_SELECTOR,
+    FILES_BUTTON_SELECTOR,
+    FILES_TOOLTIP_SELECTOR,
+    LOAD_PANEL_SELECTOR,
+    RESERVES_OPTION_SELECTOR,
+    RESERVES_SELECT_SELECTOR,
+    SHOW_BUTTON_SEARCH_SELECTOR,
+    SHOW_BUTTON_SELECTOR,
+    SHOW_BUTTON_TEXT_SELECTOR,
+    VISIBLE_DOWNLOAD_SELECTOR,
+)
+from .paths import (
+    build_output_path,
+    ensure_dir,
+    existing_output_paths,
+    normalize_download_name,
+)
 from .reports import REPORT_DEFINITIONS
 
 logger = logging.getLogger(__name__)
@@ -32,39 +64,69 @@ class DownloadResult:
 
 
 def _click_export(page: Page) -> None:
-    candidates = [
-        "button:has-text('Скачать')",
-        ".dx-datagrid-export-button",
-        "[aria-label='Экспортировать всё']",
-        "button:has-text('Export')",
-        "button:has-text('Экспорт')",
-        "[data-testid*='export']",
-        "a:has-text('Export')",
-        "a:has-text('Экспорт')",
-        "a:has-text('Скачать')",
-    ]
     last_error: Exception | None = None
-    for selector in candidates:
+    for selector in EXPORT_BUTTON_SELECTORS:
         try:
-            page.locator(selector).first.click(timeout=5000)
+            loc = page.locator(selector)
+            count = loc.count()
+            if count == 0:
+                continue
+            logger.info("download | export button | selector=%r count=%s", selector, count)
+            loc.first.click(timeout=5000)
+            logger.info("download | export button clicked | selector=%r", selector)
             return
         except Exception as exc:  # noqa: BLE001
+            logger.debug("download | export button | selector=%r failed: %s", selector, exc)
             last_error = exc
     raise RuntimeError("Export button not found") from last_error
 
 
 def _enter_export_marker(page: Page, marker: str) -> None:
-    popover = page.locator(".el-popover.export-popper-class").filter(has_text="Имя файла можно изменить").first
+    popover = (
+        page.locator(EXPORT_POPOVER_SELECTOR)
+        .filter(has_text="Имя файла можно изменить")
+        .first
+    )
     popover.wait_for(state="visible", timeout=5000)
-    popover.locator("input.el-input__inner").first.fill(marker, timeout=3000)
-    popover.locator("button.el-button:has-text('Загрузить')").first.click(timeout=3000)
+    popover.locator(EXPORT_POPUP_INPUT_SELECTOR).first.fill(marker, timeout=3000)
+    popover.locator(EXPORT_POPUP_UPLOAD_SELECTOR).first.click(timeout=3000)
 
 
 def _set_reserves_filter(page: Page, value: str) -> None:
-    page.locator(".el-select").nth(8).click(timeout=5000)
+    page.locator(RESERVES_SELECT_SELECTOR).nth(8).click(timeout=5000)
     page.wait_for_timeout(500)
-    page.locator(".el-select-dropdown__item").filter(has_text=value).last.click(timeout=5000)
+    page.locator(RESERVES_OPTION_SELECTOR).filter(has_text=value).last.click(
+        timeout=5000
+    )
     page.wait_for_timeout(300)
+
+
+def _set_select_value_by_label(page: Page, label_text: str, value: str) -> None:
+    form_item = page.locator(".el-form-item").filter(has_text=label_text).first
+    form_item.locator(".el-select").first.click(timeout=5000)
+    page.locator(RESERVES_OPTION_SELECTOR).filter(has_text=value).last.click(
+        timeout=5000
+    )
+    page.wait_for_timeout(300)
+
+
+def _set_checkbox_by_label(page: Page, label_text: str, checked: bool) -> None:
+    form_item = page.locator(".el-form-item").filter(has_text=label_text).first
+    checkbox = form_item.locator("input[type='checkbox']").first
+    if checked:
+        checkbox.check(timeout=5000)
+    else:
+        checkbox.uncheck(timeout=5000)
+    page.wait_for_timeout(200)
+
+
+def _set_single_date_by_label(page: Page, label_text: str, value: str) -> None:
+    form_item = page.locator(".el-form-item").filter(has_text=label_text).first
+    inputs = form_item.locator("input")
+    inputs.first.focus(timeout=10000)
+    page.keyboard.press("Control+A")
+    inputs.first.fill(value, timeout=3000)
+    page.wait_for_timeout(200)
 
 
 def _set_date_range_by_label(page: Page, label_text: str, start: str, end: str) -> None:
@@ -108,25 +170,39 @@ def _set_date_range_by_label(page: Page, label_text: str, start: str, end: str) 
 def _apply_search(
     page: Page,
     timeout_ms: int,
-    done_selector: str | None = ".dx-loadpanel-content",
+    done_selector: str | None = LOAD_PANEL_SELECTOR,
     pre_wait_ms: int = 0,
     reserves_filter_value: str | None = None,
     payment_date: tuple[str, str] | None = None,
     date_filter_label: str = "Дата оплаты",
+    single_date_filter: bool = False,
+    select_filters: tuple[tuple[str, str], ...] = (),
+    checkbox_filters: tuple[tuple[str, bool], ...] = (),
 ) -> None:
     if pre_wait_ms:
         page.wait_for_timeout(pre_wait_ms)
     if payment_date:
-        _set_date_range_by_label(page, date_filter_label, payment_date[0], payment_date[1])
+        if single_date_filter:
+            _set_single_date_by_label(page, date_filter_label, payment_date[1])
+        else:
+            _set_date_range_by_label(
+                page, date_filter_label, payment_date[0], payment_date[1]
+            )
+    for label_text, value in select_filters:
+        _set_select_value_by_label(page, label_text, value)
+    for label_text, checked in checkbox_filters:
+        _set_checkbox_by_label(page, label_text, checked)
     if reserves_filter_value:
         _set_reserves_filter(page, reserves_filter_value)
-    show_button = page.locator("button.el-button--primary.el-button--small").filter(has_text="Показать")
+    show_button = page.locator("button.el-button--primary.el-button--small").filter(
+        has_text="Показать"
+    )
     if show_button.count() == 0:
-        show_button = page.locator(
-            "button.el-button--primary.el-button--small:not(.input-button):has(i.el-icon-search)"
-        )
+        show_button = page.locator(SHOW_BUTTON_SEARCH_SELECTOR)
     if show_button.count() == 0:
-        show_button = page.locator("button.el-button--primary.el-button--small")
+        show_button = page.locator(SHOW_BUTTON_SELECTOR)
+    if show_button.count() == 0:
+        show_button = page.locator(SHOW_BUTTON_TEXT_SELECTOR)
     show_button.first.click(timeout=15000)
     if done_selector:
         page.locator(done_selector).wait_for(state="hidden", timeout=timeout_ms)
@@ -143,14 +219,16 @@ def _download_first_exported_file(page: Page, timeout_ms: int):
     sufficient wait), so the newest entry at the top is always the right one.
     """
     _step("files list start")
-    page.locator("button.files-button").click(timeout=5000)
-    files_popover = page.locator(
-        "div[role='tooltip'].el-popover.el-popper[aria-hidden='false']"
-    ).filter(has=page.locator("button.download-button")).first
+    page.locator(FILES_BUTTON_SELECTOR).click(timeout=5000)
+    files_popover = (
+        page.locator(FILES_TOOLTIP_SELECTOR)
+        .filter(has=page.locator(DOWNLOAD_BUTTON_SELECTOR))
+        .first
+    )
     # DevExtreme renders each row twice: once in the scrollable area (dx-hidden-cell, hidden)
     # and once in the fixed-column overlay (visible). The first N buttons in DOM order are
     # always the hidden duplicates, so we must skip them with :not(.dx-hidden-cell).
-    btn = files_popover.locator("td:not(.dx-hidden-cell) button.download-button").first
+    btn = files_popover.locator(VISIBLE_DOWNLOAD_SELECTOR).first
     btn.wait_for(state="visible", timeout=timeout_ms)
     _step("files list done")
     with page.expect_download(timeout=timeout_ms) as download_info:
@@ -158,6 +236,39 @@ def _download_first_exported_file(page: Page, timeout_ms: int):
         btn.click(timeout=5000)
     _step("file download done")
     return download_info.value
+
+
+def _history_top_row_text(page: Page, timeout_ms: int) -> str:
+    files_popover = (
+        page.locator(FILES_TOOLTIP_SELECTOR)
+        .filter(has=page.locator(DOWNLOAD_BUTTON_SELECTOR))
+        .first
+    )
+    row = files_popover.locator("tr").first
+    row.wait_for(state="visible", timeout=timeout_ms)
+    return (row.inner_text(timeout=timeout_ms) or "").strip()
+
+
+def _snapshot_history_top_row(page: Page, timeout_ms: int) -> str:
+    page.locator(FILES_BUTTON_SELECTOR).click(timeout=5000)
+    text = _history_top_row_text(page, timeout_ms)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(250)
+    return text
+
+
+def _wait_for_history_refresh(page: Page, baseline: str, timeout_ms: int) -> None:
+    deadline = timeout_ms / 1000
+    waited = 0.0
+    while waited <= deadline:
+        page.locator(FILES_BUTTON_SELECTOR).click(timeout=5000)
+        current = _history_top_row_text(page, timeout_ms)
+        if current and current != baseline:
+            return
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(3000)
+        waited += 3
+    raise RuntimeError("Export history did not refresh with a new row")
 
 
 def _wait_for_export_ready_by_name(
@@ -184,118 +295,26 @@ def _wait_for_export_ready_by_name(
             name = row.get("original_file_name") or row.get("file_name") or ""
             status = row.get("status_id", "")
             if expected_name in name:
-                logger.info("download | api-poll | '%s' status=%s id=%s", name, status, row_id)
+                logger.info(
+                    "download | api-poll | '%s' status=%s id=%s", name, status, row_id
+                )
                 if status == "ready":
                     _step(f"api-poll ready: {name}")
                     return
                 if status == "fail":
-                    raise RuntimeError(f"Export '{name}' failed on server (status=fail)")
-        logger.info("download | api-poll | '%s' not ready yet, waited %sms", expected_name, waited_ms)
+                    raise RuntimeError(
+                        f"Export '{name}' failed on server (status=fail)"
+                    )
+        logger.info(
+            "download | api-poll | '%s' not ready yet, waited %sms",
+            expected_name,
+            waited_ms,
+        )
         session.page.wait_for_timeout(poll_interval_ms)
         waited_ms += poll_interval_ms
-    raise RuntimeError(f"Export '{expected_name}' did not become ready within {timeout_ms}ms")
-
-
-def _determine_extension(downloaded_name: str, url: str | None = None) -> str:
-    parsed = Path(downloaded_name)
-    if parsed.suffix:
-        return parsed.suffix
-    if url:
-        suffix = Path(urlparse(url).path).suffix
-        if suffix:
-            return suffix
-    # TODO: confirm the actual export extension when Herm Finance does not provide one.
-    return ".bin"
-
-
-def _move_download(download_path: Path, output_path: Path) -> None:
-    ensure_parent_dir(output_path)
-    if output_path.exists():
-        output_path.unlink()
-    shutil.move(str(download_path), str(output_path))
-
-
-def _request_json(session: BrowserSession, method: str, url: str, payload: dict | None = None) -> dict:
-    body = session.page.evaluate(
-        """async ({ method, url, payload }) => {
-            const headers = { 'X-Requested-With': 'XMLHttpRequest' };
-            const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-            const xsrf = decodeURIComponent((document.cookie.match(/XSRF-TOKEN=([^;]+)/) || [])[1] || '');
-            if (token) headers['X-CSRF-TOKEN'] = token;
-            if (xsrf) headers['X-XSRF-TOKEN'] = xsrf;
-            if (method === 'POST') headers['Content-Type'] = 'application/json';
-            const response = await fetch(url, {
-                method,
-                credentials: 'include',
-                headers,
-                body: method === 'POST' ? JSON.stringify(payload ?? {}) : undefined,
-            });
-            return {
-                status: response.status,
-                text: await response.text(),
-            };
-        }""",
-        {"method": method, "url": url, "payload": payload},
+    raise RuntimeError(
+        f"Export '{expected_name}' did not become ready within {timeout_ms}ms"
     )
-    if body["status"] >= 400:
-        raise RuntimeError(f"{method} {url} -> {body['status']}: {body['text'][:200]}")
-    try:
-        return json.loads(body["text"]) if body["text"] else {}
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"{method} {url} did not return JSON") from exc
-
-
-def _request_bytes(session: BrowserSession, method: str, url: str) -> tuple[bytes, dict[str, str]]:
-    body = session.page.evaluate(
-        """async ({ method, url }) => {
-            const headers = { 'X-Requested-With': 'XMLHttpRequest' };
-            const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-            const xsrf = decodeURIComponent((document.cookie.match(/XSRF-TOKEN=([^;]+)/) || [])[1] || '');
-            if (token) headers['X-CSRF-TOKEN'] = token;
-            if (xsrf) headers['X-XSRF-TOKEN'] = xsrf;
-            const response = await fetch(url, {
-                method,
-                credentials: 'include',
-                headers,
-            });
-            const buffer = await response.arrayBuffer();
-            let binary = '';
-            const bytes = new Uint8Array(buffer);
-            const chunkSize = 0x8000;
-            for (let i = 0; i < bytes.length; i += chunkSize) {
-                binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-            }
-            return {
-                status: response.status,
-                headers: Object.fromEntries(response.headers.entries()),
-                data: btoa(binary),
-                text: bytes.length < 1024 ? new TextDecoder().decode(buffer) : '',
-            };
-        }""",
-        {"method": method, "url": url},
-    )
-    if body["status"] >= 400:
-        raise RuntimeError(f"{method} {url} -> {body['status']}: {body.get('text', '')[:200]}")
-    import base64
-
-    headers = {k.lower(): v for k, v in body["headers"].items()}
-    return base64.b64decode(body["data"]), headers
-
-
-def _trigger_async_export(session: BrowserSession, export_url: str, file_name: str) -> None:
-    logger.info("download | trigger export -> %s (%s)", export_url, file_name)
-    _request_json(session, "POST", export_url, {"userData": {"fileName": file_name}})
-
-
-def _load_export_rows(session: BrowserSession, base_url: str) -> list[dict]:
-    payload = _request_json(session, "POST", f"{base_url}/api/resources/export-file/all", {})
-    return payload.get("data", [])
-
-
-def _step(label: str) -> None:
-    message = f"download | step | {label}"
-    print(message, flush=True)
-    logger.info(message)
 
 
 class _StageTimeout(Exception):
@@ -304,7 +323,11 @@ class _StageTimeout(Exception):
         self.stage = stage
 
 
-def _run_with_timeout(stage: str, timeout_ms: int, fn: Callable[[], Path | dict | tuple[bytes, str] | None]):
+def _run_with_timeout(
+    stage: str,
+    timeout_ms: int,
+    fn: Callable[[], Path | dict | tuple[bytes, str] | None],
+):
     def handler(signum, frame):  # noqa: ARG001
         raise _StageTimeout(stage)
 
@@ -315,71 +338,6 @@ def _run_with_timeout(stage: str, timeout_ms: int, fn: Callable[[], Path | dict 
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
-
-
-def _candidate_export_names(file_name: str, extra_name: str | None = None) -> list[str]:
-    stem = Path(file_name).stem
-    names: list[str] = []
-    if extra_name:
-        names.append(extra_name)
-    parts = stem.rsplit("_", 1)
-    if len(parts) == 2 and len(parts[1]) == 7 and parts[1][4] == "-":
-        period = parts[1]
-        names.extend([file_name, f"{period}-01.xlsx", f"{period}.xlsx"])
-        return names
-    names.append(file_name)
-    return names
-
-
-def _poll_ready_export_row(
-    session: BrowserSession,
-    base_url: str,
-    file_name: str,
-    timeout_ms: int,
-    min_row_id: int | None = None,
-    extra_name: str | None = None,
-) -> dict:
-    candidates = set(_candidate_export_names(file_name, extra_name))
-    deadline = timeout_ms / 1000
-    waited = 0.0
-    while waited <= deadline:
-        _step("fetch export rows start")
-        rows = _load_export_rows(session, base_url)
-        _step("fetch export rows done")
-        ready_rows = [
-            row
-            for row in rows
-            if row.get("status_id") == "ready"
-            and (min_row_id is None or int(row.get("id", 0)) > min_row_id)
-            and (
-                row.get("original_file_name") in candidates
-                or row.get("file_name") in candidates
-            )
-        ]
-        if ready_rows:
-            ready_rows.sort(key=lambda row: row.get("id", 0), reverse=True)
-            _step("row selected")
-            return ready_rows[0]
-        _step("no row")
-        sleep(1)
-        waited += 1
-    raise RuntimeError(f"Ready export row not found for {file_name}")
-
-
-def _download_export_file(session: BrowserSession, base_url: str, file_id: str | int) -> tuple[bytes, str]:
-    body, headers = _request_bytes(session, "POST", f"{base_url}/api/export_files/download/{file_id}")
-    return body, headers.get("content-disposition", "")
-
-
-def _save_export_bytes(output_path: Path, data: bytes, disposition: str) -> Path:
-    suggested = normalize_download_name(disposition.split("filename=")[-1].strip('\"; ') if "filename=" in disposition else output_path.name)
-    ext = _determine_extension(suggested)
-    final_path = output_path.with_suffix(ext)
-    ensure_parent_dir(final_path)
-    final_path.write_bytes(data)
-    if final_path.stat().st_size == 0:
-        raise RuntimeError("Downloaded file is empty")
-    return final_path
 
 
 def _trigger_export_with_marker(page: Page, marker: str) -> None:
@@ -398,7 +356,9 @@ def _trigger_export_with_marker(page: Page, marker: str) -> None:
     _step("export marker done")
 
 
-def _download_from_history(page: Page, target_dir: Path, output_path: Path, timeout_ms: int) -> Path:
+def _download_from_history(
+    page: Page, target_dir: Path, output_path: Path, timeout_ms: int
+) -> Path:
     """Open the history panel and download the first (newest) ready file."""
     download = _download_first_exported_file(page, timeout_ms)
     suggested = normalize_download_name(download.suggested_filename)
@@ -414,6 +374,34 @@ def _download_from_history(page: Page, target_dir: Path, output_path: Path, time
     return output_path
 
 
+def _wait_for_new_export_row(
+    session: "BrowserSession",
+    base_url: str,
+    before_max_id: int,
+    timeout_ms: int,
+) -> None:
+    """Poll /api/resources/export-file/all until a new row with id > before_max_id has status 'ready'."""
+    poll_interval_ms = 3000
+    waited_ms = 0
+    while waited_ms <= timeout_ms:
+        rows = _load_export_rows(session, base_url)
+        for row in rows:
+            row_id = int(row.get("id", 0))
+            if row_id <= before_max_id:
+                continue
+            status = row.get("status_id", "")
+            name = row.get("original_file_name") or row.get("file_name") or ""
+            if status == "ready":
+                _step(f"api-poll ready: id={row_id} name={name}")
+                return
+            if status == "fail":
+                raise RuntimeError(f"Export id={row_id} failed on server (status=fail)")
+        logger.info("download | api-poll | no new ready row yet, waited %sms", waited_ms)
+        session.page.wait_for_timeout(poll_interval_ms)
+        waited_ms += poll_interval_ms
+    raise RuntimeError(f"No new export row became ready within {timeout_ms}ms")
+
+
 def _save_download(
     page: Page,
     target_dir: Path,
@@ -421,17 +409,20 @@ def _save_download(
     timeout_ms: int,
     wait_after_export_ms: int = 5000,
     via_history: bool = False,
+    session: "BrowserSession | None" = None,
+    base_url: str = "",
+    before_max_id: int = 0,
 ) -> Path:
     """Trigger export via UI and save the file.
 
-    via_history=True  — click export → fixed wait → history panel → first button.
+    via_history=True  — click export → wait for new export row via API → history panel → first button.
     via_history=False — click export → browser download dialog.
 
     For marker-based exports (applications, budget_rows) use
     _trigger_export_with_marker + _wait_for_export_ready_by_name +
     _download_from_history directly in download_report_for_month.
     """
-    logger.info("download | waiting for export")
+    logger.info("download | mode=%s | target=%s", "history" if via_history else "direct", output_path)
     if via_history:
         _step("export click start")
         _click_export(page)
@@ -445,19 +436,32 @@ def _save_download(
             _step("export click done")
         download = download_info.value
     suggested = normalize_download_name(download.suggested_filename)
+    logger.info("download | browser filename=%s | url=%s", suggested, download.url)
     ext = _determine_extension(suggested, download.url)
     final_path = output_path.with_suffix(ext)
     if final_path != output_path:
+        logger.info("download | ext adjusted -> %s", final_path)
         output_path = final_path
     tmp_path = target_dir / f"_tmp_{suggested}"
+    logger.info("download | saving tmp -> %s", tmp_path)
     download.save_as(str(tmp_path))
+    logger.info("download | moving -> %s", output_path)
     _move_download(tmp_path, output_path)
-    if output_path.stat().st_size == 0:
+    size = output_path.stat().st_size
+    logger.info("download | saved | size=%s | path=%s", size, output_path)
+    if size == 0:
         raise RuntimeError("Downloaded file is empty")
     return output_path
 
 
-def log_result(report_code: str, period: MonthPeriod | str, status: str, details: str = "") -> None:
+def _save_latest_browser_download(output_path: Path) -> Path:
+    downloads_dir = Path.home() / "Downloads"
+    return _move_latest_download(downloads_dir, output_path, "*.xlsx")
+
+
+def log_result(
+    report_code: str, period: MonthPeriod | str, status: str, details: str = ""
+) -> None:
     label = period.label if isinstance(period, MonthPeriod) else period
     suffix = f" -> {details}" if details else ""
     logger.info("%s | %s | %s%s", report_code, label, status, suffix)
@@ -473,18 +477,46 @@ def download_report_for_month(
     page = session.page
     target_dir = ensure_dir(config.download_dir / report.export_dir)
     url = report.build_url(config.base_url.rstrip("/"), month_period)
-    export_file_name = f"{report.file_prefix}_{month_period.label}.xlsx"
-    output_path = build_output_path(config.download_dir, report.export_dir, month_period, ".xlsx", report.file_prefix)
+    use_end_date = not report.append_month_to_filename and report.payment_date_filter and report.single_date_filter
+    export_file_name = (
+        f"{report.file_prefix}_{month_period.label}.xlsx"
+        if report.append_month_to_filename
+        else f"{report.file_prefix}.xlsx"
+    )
+    output_path = build_output_path(
+        config.download_dir,
+        report.export_dir,
+        month_period,
+        ".xlsx",
+        report.file_prefix,
+        use_end_date=use_end_date,
+    )
+    if not report.append_month_to_filename and not use_end_date:
+        output_path = output_path.with_name(f"{report.file_prefix}.xlsx")
     # Reports with use_export_marker=True open a filename popover after clicking export;
     # we fill it with "{file_prefix}_{YYYY-MM}" and then download via the history panel.
-    export_marker = f"{report.file_prefix}_{month_period.label}" if report.use_export_marker else None
+    export_marker = None
+    if report.use_export_marker:
+        export_marker = (
+            f"{report.file_prefix}_{month_period.label}"
+            if report.append_month_to_filename
+            else report.file_prefix
+        )
 
     for attempt in range(1, 4):
         try:
             log_result(report_code, month_period, "started")
-            existing = existing_output_paths(config.download_dir, report.export_dir, month_period)
+            existing = existing_output_paths(
+                config.download_dir, report.export_dir, month_period
+            )
+            if report.code == "contractors" and existing:
+                for path in existing:
+                    path.unlink()
+                existing = []
             if existing and not config.overwrite:
-                log_result(report_code, month_period, "skipped", f"exists -> {existing[0]}")
+                log_result(
+                    report_code, month_period, "skipped", f"exists -> {existing[0]}"
+                )
                 return DownloadResult(True, existing[0])
             logger.info("%s | %s | opening -> %s", report_code, month_period.label, url)
             _step("page open start")
@@ -494,9 +526,13 @@ def download_report_for_month(
                 _step("apply search start")
                 # herm.finance date-range picker uses DD.MM.YY (two-digit year).
                 payment_date = (
-                    month_period.start.strftime("%d.%m.%y"),
-                    month_period.end.strftime("%d.%m.%y"),
-                ) if report.payment_date_filter else None
+                    (
+                        month_period.start.strftime("%d.%m.%y"),
+                        month_period.end.strftime("%d.%m.%y"),
+                    )
+                    if report.payment_date_filter
+                    else None
+                )
                 _apply_search(
                     page,
                     config.timeout_ms,
@@ -505,6 +541,9 @@ def download_report_for_month(
                     report.reserves_filter_value,
                     payment_date=payment_date,
                     date_filter_label=report.date_filter_label,
+                    single_date_filter=report.single_date_filter,
+                    select_filters=report.select_filters,
+                    checkbox_filters=report.checkbox_filters,
                 )
                 _step("apply search done")
             if report.export_endpoint:
@@ -514,21 +553,38 @@ def download_report_for_month(
                 _step("fetch export rows before trigger start")
                 before_rows = _load_export_rows(session, base_url)
                 _step("fetch export rows before trigger done")
-                before_max_id = max((int(row.get("id", 0)) for row in before_rows), default=0)
+                before_max_id = max(
+                    (int(row.get("id", 0)) for row in before_rows), default=0
+                )
                 try:
                     _step("trigger start")
                     _run_with_timeout(
                         "trigger",
                         config.timeout_ms,
-                        lambda: _trigger_async_export(session, f"{base_url}{report.export_endpoint}", export_file_name),
+                        lambda: _trigger_async_export(
+                            session,
+                            f"{base_url}{report.export_endpoint}",
+                            export_file_name,
+                        ),
                     )
                     _step("trigger done")
                 except Exception as exc:  # noqa: BLE001
                     # Known behavior: some Herm Finance reports return 500 on trigger, but the export row
                     # still appears in /api/resources/export-file/all and can be downloaded from there.
-                    logger.warning("%s | %s | trigger failed -> %s", report_code, month_period.label, exc)
+                    logger.warning(
+                        "%s | %s | trigger failed -> %s",
+                        report_code,
+                        month_period.label,
+                        exc,
+                    )
                 _step("fetch status start")
-                _run_with_timeout("status", config.timeout_ms, lambda: _request_json(session, "GET", f"{base_url}/api/export_files/status"))
+                _run_with_timeout(
+                    "status",
+                    config.timeout_ms,
+                    lambda: _request_json(
+                        session, "GET", f"{base_url}/api/export_files/status"
+                    ),
+                )
                 _step("fetch status done")
                 _step("poll new row start")
                 row = _run_with_timeout(
@@ -545,7 +601,11 @@ def download_report_for_month(
                 )
                 _step("poll new row done")
                 _step("download start")
-                body, disposition = _run_with_timeout("download", config.timeout_ms, lambda: _download_export_file(session, base_url, row["id"]))
+                body, disposition = _run_with_timeout(
+                    "download",
+                    config.timeout_ms,
+                    lambda: _download_export_file(session, base_url, row["id"]),
+                )
                 _step("download done")
                 _step("save file start")
                 saved_path = _save_export_bytes(output_path, body, disposition)
@@ -560,18 +620,50 @@ def download_report_for_month(
                     #   4. Open history panel → click first (newest) download button.
                     base_url = config.base_url.rstrip("/")
                     before_rows = _load_export_rows(session, base_url)
-                    before_max_id = max((int(r.get("id", 0)) for r in before_rows), default=0)
+                    before_max_id = max(
+                        (int(r.get("id", 0)) for r in before_rows), default=0
+                    )
                     _trigger_export_with_marker(page, export_marker)
                     _wait_for_export_ready_by_name(
-                        session, base_url, export_marker, config.timeout_ms, min_id=before_max_id,
+                        session,
+                        base_url,
+                        export_marker,
+                        config.timeout_ms,
+                        min_id=before_max_id,
                     )
-                    saved_path = _download_from_history(page, target_dir, output_path, config.timeout_ms)
+                    saved_path = _download_from_history(
+                        page, target_dir, output_path, config.timeout_ms
+                    )
                 else:
-                    saved_path = _save_download(page, target_dir, output_path, config.timeout_ms, report.wait_after_export_ms, report.export_via_history)
+                    if report.export_via_history:
+                        _via_history_baseline = _snapshot_history_top_row(
+                            page, config.timeout_ms
+                        )
+                        page.wait_for_timeout(report.wait_after_export_ms)
+                        _wait_for_history_refresh(
+                            page, _via_history_baseline, config.timeout_ms
+                        )
+                        saved_path = _download_from_history(
+                            page, target_dir, output_path, config.timeout_ms
+                        )
+                    else:
+                        saved_path = _save_download(
+                            page,
+                            target_dir,
+                            output_path,
+                            config.timeout_ms,
+                            report.wait_after_export_ms,
+                            report.export_via_history,
+                            session=None,
+                            base_url="",
+                            before_max_id=0,
+                        )
             log_result(report_code, month_period, "saved", str(saved_path))
             return DownloadResult(True, saved_path)
         except PlaywrightTimeoutError as exc:
-            logger.warning("%s | %s | timeout attempt %s", report_code, month_period.label, attempt)
+            logger.warning(
+                "%s | %s | timeout attempt %s", report_code, month_period.label, attempt
+            )
             last_error = f"timeout: {exc}"
         except PlaywrightError as exc:
             last_error = f"playwright error: {exc}"
@@ -583,7 +675,10 @@ def download_report_for_month(
         if attempt < 3:
             sleep(2 * attempt)
             continue
-        log_result(report_code, month_period, "error", last_error)
-        return DownloadResult(False, None, last_error)
+        contextual_error = f"{report_code}:{month_period.label}:{last_error}"
+        log_result(report_code, month_period, "error", contextual_error)
+        return DownloadResult(False, None, contextual_error)
 
-    return DownloadResult(False, None, "unknown error")
+    return DownloadResult(
+        False, None, f"{report_code}:{month_period.label}:unknown error"
+    )

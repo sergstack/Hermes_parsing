@@ -2,13 +2,14 @@ from datetime import date
 
 import pytest
 
-from app.dates import build_months_range_until_year_end, MonthPeriod
+from app.dates import build_months_range_until_year_end
 from app.reports import (
     REPORT_DEFINITIONS,
     _build_account_balances_url,
     _build_applications_url,
     _build_bank_cashbox_url,
     _build_budget_rows_url,
+    _build_cons_budget_url,
     _build_contractors_url,
     _build_dds_expenses_url,
 )
@@ -47,6 +48,10 @@ from app.reports import (
             _build_account_balances_url,
             "https://herm.finance/ledger/reports/account_balance_report?date=2026-03-31&exclude_zero_balances=1&exclude_blocked=0&exclude_closed=1&exclude_moneyboxes=0&exclude_archived=1&is_holder=false",
         ),
+        (
+            _build_cons_budget_url,
+            "https://herm.finance/budgeting/reports/consolidated_plan_fact_monthly_report?dates_period%5B0%5D=2026-03-01&dates_period%5B1%5D=2026-03-31&projects%5B0%5D=5&statuses%5B0%5D=7&statuses%5B1%5D=6&statuses%5B2%5D=5&statuses%5B3%5D=2&statuses%5B4%5D=3&level=3&excludeIntraCompany=1&showDiff=false&showCurrentInOutDiff=false&showPrevInOutDiff=false&planFactDisplayOption=planAndFact&reportCurrencyId=5",
+        ),
     ],
 )
 def test_build_urls(sample_period, builder, expected):
@@ -71,6 +76,11 @@ def test_budget_rows_uses_export_marker():
 def test_budget_rows_no_api_endpoint():
     """budget_rows must NOT use the broken API endpoint."""
     assert REPORT_DEFINITIONS["budget_rows"].export_endpoint is None
+
+
+def test_budget_rows_date_filter_label():
+    """budget_rows must fill the UI field labeled 'Дата оплаты'."""
+    assert REPORT_DEFINITIONS["budget_rows"].date_filter_label == "Дата оплаты"
 
 
 def test_applications_uses_export_marker():
@@ -100,6 +110,82 @@ def test_dds_expenses_renamed_to_dds():
     assert rd.file_prefix == "dds"
 
 
+def test_p_fact_definition():
+    rd = REPORT_DEFINITIONS["p-fact"]
+    assert rd.export_dir == "p-fact"
+    assert rd.file_prefix == "p-fact"
+    assert rd.use_export_marker is False
+    assert rd.export_via_history is True
+
+
 def test_dds_reserves_removed():
     """dds_reserves report must no longer exist."""
     assert "dds_reserves" not in REPORT_DEFINITIONS
+
+
+def test_contractors_use_ui_export_marker_and_russian_prefix():
+    rd = REPORT_DEFINITIONS["contractors"]
+    assert rd.export_endpoint is None
+    assert rd.use_export_marker is True
+    assert rd.file_prefix == "contractors"
+    assert rd.append_month_to_filename is False
+
+
+def test_account_balances_definition():
+    rd = REPORT_DEFINITIONS["account_balances"]
+    assert rd.export_dir == "account_balances"
+    assert rd.file_prefix == "acc_balance"
+    assert rd.append_month_to_filename is False
+    assert rd.export_endpoint is None
+    assert rd.payment_date_filter is True
+    assert rd.date_filter_label == "Дата"
+    assert rd.select_filters == (
+        ("Отчетная валюта", "EUR"),
+        ("Нулевые остатки", "--"),
+        ("Заблокированные", "--"),
+        ("Закрытые счета", "--"),
+        ("Счета-копилки", "--"),
+        ("Архивные счета", "Исключить"),
+    )
+    assert rd.checkbox_filters == (("Мои счета", False),)
+
+
+def test_account_balances_export_name_format_uses_month_end():
+    rd = REPORT_DEFINITIONS["account_balances"]
+    assert rd.file_prefix == "acc_balance"
+
+
+def test_cons_budget_definition():
+    rd = REPORT_DEFINITIONS["cons_budget"]
+    assert rd.export_dir == "cons_budget"
+    assert rd.file_prefix == "cons_budget"
+    assert rd.export_via_history is False
+    assert rd.repeat_each_month is False
+    assert rd.append_month_to_filename is False
+
+
+def test_cons_budget_url_uses_fixed_period_range():
+    period = type(
+        "P",
+        (),
+        {
+            "label": "2025-01",
+            "start": date(2025, 1, 1),
+            "end": date(2026, 4, 30),
+        },
+    )()
+    assert _build_cons_budget_url("https://herm.finance", period) == (
+        "https://herm.finance/budgeting/reports/consolidated_plan_fact_monthly_report"
+        "?dates_period%5B0%5D=2025-01-01"
+        "&dates_period%5B1%5D=2026-04-30"
+        "&projects%5B0%5D=5"
+        "&statuses%5B0%5D=7&statuses%5B1%5D=6&statuses%5B2%5D=5"
+        "&statuses%5B3%5D=2&statuses%5B4%5D=3"
+        "&level=3"
+        "&excludeIntraCompany=1"
+        "&showDiff=false"
+        "&showCurrentInOutDiff=false"
+        "&showPrevInOutDiff=false"
+        "&planFactDisplayOption=planAndFact"
+        "&reportCurrencyId=5"
+    )

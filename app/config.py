@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -61,6 +60,11 @@ def _parse_line(line: str) -> tuple[str, str] | None:
     return key.strip(), value.strip()
 
 
+def normalize_config(config: AppConfig, project_root: Path | None = None) -> AppConfig:
+    """Resolve relative config paths against project_root or the current working tree."""
+    return config.resolved(project_root or Path.cwd())
+
+
 def read_config(config_path: str | Path = "config/config.txt") -> AppConfig:
     """Read a minimal key=value config file."""
 
@@ -90,4 +94,3 @@ def read_config(config_path: str | Path = "config/config.txt") -> AppConfig:
         repeat_each_month=_parse_bool(raw.get("repeat_each_month", "false")),
         config_path=path.resolve(),
     )
-

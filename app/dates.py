@@ -29,7 +29,9 @@ def month_bounds(any_date: date) -> MonthPeriod:
     return MonthPeriod(start=start, end=end)
 
 
-def build_months_range_until_year_end(start_date: str, today: date | None = None) -> list[MonthPeriod]:
+def build_months_range_until_year_end(
+    start_date: str, today: date | None = None
+) -> list[MonthPeriod]:
     """Build inclusive month periods from start_date to December of the current year.
 
     Used for budget rows, which contain planned (future) payments — so we need
@@ -65,4 +67,3 @@ def build_months_range(start_date: str, today: date | None = None) -> list[Month
         else:
             cursor = cursor.replace(month=cursor.month + 1, day=1)
     return periods
-
