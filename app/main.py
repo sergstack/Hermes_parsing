@@ -15,6 +15,7 @@ from .browser import close_browser_session
 from .config import normalize_config, read_config
 from .dates import MonthPeriod, build_months_range, build_months_range_until_year_end
 from .downloaders import download_report_for_month
+from .failure_artifacts import write_failure_artifacts
 from .logging_utils import setup_logging
 from .metrics import AttemptTiming, RunMetrics, StageTiming, write_run_metrics
 from .paths import build_output_path
@@ -229,6 +230,22 @@ def main() -> int:
                 else:
                     summary.error_count += 1
                     summary.failed_reports.append(f"{report_code}:{period.label}")
+                    write_failure_artifacts(
+                        Path("logs"),
+                        run_id,
+                        report_code,
+                        period.label,
+                        {
+                            "report_code": report_code,
+                            "period": period.label,
+                            "error": result.error,
+                            "error_code": result.error_code,
+                            "error_stage": result.error_stage,
+                            "error_message": result.error_message,
+                        },
+                        metrics_attempts[-1].to_dict(),
+                        getattr(session, "page", None),
+                    )
         logger.info(
             "summary | success=%s | error=%s | failed=%s",
             summary.success_count,
