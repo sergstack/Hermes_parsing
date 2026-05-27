@@ -52,6 +52,9 @@ Each tuning PR must include:
 - score calculation script or command
 - explicit rollback command
 
+Scores must use stable error codes from the exporter taxonomy rather than raw
+exception strings, so failure counts remain comparable across refactors.
+
 ## Required Metrics Fields
 
 Run-level fields:

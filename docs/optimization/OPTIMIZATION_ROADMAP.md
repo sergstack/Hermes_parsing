@@ -57,6 +57,10 @@ Acceptance:
 Introduce stable error codes for timeout, selector, export-history, API polling,
 empty file, and auth/session failures.
 
+The error taxonomy provides stable error codes for later metrics, retry policy,
+and failure packages. It is intentionally not wired into downloader behavior in
+this PR.
+
 Acceptance:
 
 - Error codes are testable without live export.
