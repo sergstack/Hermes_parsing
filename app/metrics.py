@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -31,6 +32,9 @@ class AttemptTiming:
     status: str
     stages: list[StageTiming] = field(default_factory=list)
     error_code: str | None = None
+    duration_sec: float = 0.0
+    output_path: str | None = None
+    file_size: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,12 +43,16 @@ class AttemptTiming:
             "attempt": self.attempt,
             "status": self.status,
             "error_code": self.error_code,
+            "duration_sec": self.duration_sec,
+            "output_path": self.output_path,
+            "file_size": self.file_size,
             "stages": [stage.to_dict() for stage in self.stages],
         }
 
 
 @dataclass(frozen=True)
 class RunMetrics:
+    run_id: str = ""
     schema_version: int = 1
     status: str = "unknown"
     dry_run: bool = False
@@ -52,6 +60,7 @@ class RunMetrics:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "run_id": self.run_id,
             "schema_version": self.schema_version,
             "status": self.status,
             "dry_run": self.dry_run,
@@ -60,3 +69,10 @@ class RunMetrics:
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True)
+
+
+def write_run_metrics(log_dir: Path, metrics: RunMetrics) -> Path:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = log_dir / "run_metrics.json"
+    metrics_path.write_text(metrics.to_json() + "\n", encoding="utf-8")
+    return metrics_path
