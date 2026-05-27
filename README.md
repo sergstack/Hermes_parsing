@@ -1,5 +1,25 @@
 # Herm Finance monthly exporter
 
+Python + Playwright exporter for Herm Finance reports. The project keeps report
+definitions in code, writes downloaded files to local runtime folders, and
+supports a dry-run mode for reviewer-friendly validation without opening a
+browser or starting a live export.
+
+## Quick reviewer setup
+
+```bash
+git clone https://github.com/sergstack/Hermes_parsing.git
+cd Hermes_parsing
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+python -m pytest -q
+```
+
 ## Installation
 
 1. Create and activate a Python 3.11+ virtual environment.
@@ -9,7 +29,13 @@
 pip install -r requirements.txt
 ```
 
-3. Install Playwright browsers:
+3. Install development dependencies if you plan to run tests or lint:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+4. Install Playwright browsers for live exports:
 
 ```bash
 playwright install
@@ -17,7 +43,14 @@ playwright install
 
 ## Configuration
 
-`config/config.txt` — основной конфигурационный файл:
+Create a local config from the public example:
+
+```bash
+cp config/config.example.txt config/config.local.txt
+```
+
+`config/config.local.txt` or `config/config.txt` can be used as the local
+runtime configuration file:
 
 | Параметр | Описание | Пример |
 |---|---|---|
@@ -29,15 +62,36 @@ playwright install
 | `overwrite` | Перезаписывать существующие файлы | `false` |
 | `timeout_ms` | Таймаут операций (мс) | `60000` |
 | `slow_mo` | Замедление Playwright (мс) | `0` |
+| `repeat_each_month` | Повторять непомесячные отчёты каждый месяц | `false` |
 
 **Конечная дата** вычисляется автоматически: текущий месяц − 1.  
 При `overwrite=false` скрипт проверяет наличие файлов и скачивает только пропуски.
 
+Do not commit private runtime files:
+
+- `config/config.txt`
+- `config/config.local.txt`
+- `state/`
+- `exports/`
+- `logs/`
+- `.env` and `.env.*`
+
 ## Run
 
+Dry-run without a browser or live Herm Finance export:
+
 ```bash
-python -m app.main
+python -m app.main --config config/config.local.txt --dry-run --reports dds --headless true
 ```
+
+Run the configured live export:
+
+```bash
+python -m app.main --config config/config.local.txt
+```
+
+Live export requires manual Herm Finance login and must not be run in CI. Do not
+run a live export unless you intend to use the configured Herm Finance account.
 
 ### CLI options
 
@@ -49,6 +103,12 @@ python -m app.main
 
 Dry-run writes a machine-readable plan to `logs/summary.json`.
 
+## Tests
+
+```bash
+python -m pytest -q
+```
+
 ## First login
 
 При первом запуске или если сохранённая сессия устарела — откроется видимый браузер. Войдите вручную на `https://herm.finance`, затем вернитесь в терминал и нажмите Enter. Сессия сохраняется в `session_file`.
@@ -56,6 +116,14 @@ Dry-run writes a machine-readable plan to `logs/summary.json`.
 ## Output
 
 Файлы сохраняются в `./exports/<папка_отчёта>/<префикс>_YYYY-MM.xlsx`.
+
+Runtime output directories:
+
+- `exports/` — downloaded report files.
+- `logs/` — run logs and dry-run summary output.
+- `state/` — browser session state.
+
+Completed one-off task artifacts are archived under `docs/tasks/`.
 
 ## Supported reports
 

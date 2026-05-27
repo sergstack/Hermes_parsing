@@ -2,11 +2,15 @@
 .claude/
 .codex/
 .pytest_cache/
+.ruff_cache/
 .venv/
 venv/
 __pycache__/
 *.pyc
+.env
+.env.*
 config/config.txt
+config/config.local.txt
 logs/
 output/
 exports/
