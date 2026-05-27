@@ -1,5 +1,5 @@
 # Herm Finance exporter configuration
-start_date=2025-01-01
+start_date=2024-01-01
 base_url=https://herm.finance
 download_dir=./exports
 session_file=./state/herm_session.json

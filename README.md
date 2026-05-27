@@ -54,7 +54,7 @@ runtime configuration file:
 
 | Параметр | Описание | Пример |
 |---|---|---|
-| `start_date` | Начало периода выгрузки | `2025-01-01` |
+| `start_date` | Начало периода выгрузки | `2024-01-01` |
 | `base_url` | URL сайта | `https://herm.finance` |
 | `download_dir` | Папка для файлов | `./exports` |
 | `session_file` | Файл сессии браузера | `./state/herm_session.json` |
