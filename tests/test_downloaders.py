@@ -136,6 +136,68 @@ def test_trigger_export_with_marker_calls_click_and_enter(mock_page):
     mock_enter_marker.assert_called_once_with(mock_page, "demands_2026-03")
 
 
+def test_export_via_history_snapshots_then_clicks_export_before_download(
+    tmp_path, mock_session
+):
+    from datetime import date
+    from pathlib import Path
+
+    from app.config import AppConfig
+    from app.dates import MonthPeriod
+    from app.downloaders import download_report_for_month
+
+    events = []
+    config = AppConfig(
+        start_date="2025-01-01",
+        base_url="https://herm.finance",
+        download_dir=tmp_path / "exports",
+        session_file=Path("/tmp/session.json"),
+        headless=True,
+        overwrite=True,
+        timeout_ms=15000,
+        slow_mo=0,
+        repeat_each_month=False,
+    )
+    period = MonthPeriod(start=date(2025, 1, 1), end=date(2025, 1, 31))
+
+    def record_wait(page, baseline, timeout_ms):
+        events.append(f"wait:{baseline}")
+
+    with (
+        patch(
+            "app.downloaders._apply_search",
+            side_effect=lambda *args, **kwargs: events.append("apply_search"),
+        ),
+        patch(
+            "app.downloaders._snapshot_history_top_row",
+            side_effect=lambda *args, **kwargs: events.append("snapshot") or "old-row",
+        ),
+        patch(
+            "app.downloaders._click_export",
+            side_effect=lambda page: events.append("click_export"),
+        ) as click_export,
+        patch("app.downloaders._wait_for_history_refresh", side_effect=record_wait),
+        patch(
+            "app.downloaders._download_from_history",
+            side_effect=lambda *args, **kwargs: (
+                events.append("download")
+                or tmp_path / "exports" / "dds" / "dds_2025-01.xlsx"
+            ),
+        ),
+    ):
+        result = download_report_for_month(mock_session, config, "dds_expenses", period)
+
+    assert result.success is True
+    click_export.assert_called_once_with(mock_session.page)
+    assert events == [
+        "apply_search",
+        "snapshot",
+        "click_export",
+        "wait:old-row",
+        "download",
+    ]
+
+
 def test_wait_for_export_ready_returns_when_status_ready(mock_session):
     """_wait_for_export_ready_by_name must return as soon as it finds a ready row."""
     ready_row = {
@@ -329,7 +391,9 @@ def test_move_latest_download_moves_newest_xlsx(tmp_path):
     new_file.write_text("newer", encoding="utf-8")
     assert old_mtime <= new_file.stat().st_mtime
 
-    output_path = tmp_path / "exports" / "account_balances" / "acc_balance_2025-01-31.xlsx"
+    output_path = (
+        tmp_path / "exports" / "account_balances" / "acc_balance_2025-01-31.xlsx"
+    )
     moved = move_latest_download(downloads_dir, output_path)
 
     assert moved == output_path
@@ -346,7 +410,9 @@ def test_move_latest_download_since_uses_only_new_files(tmp_path):
     new_file.write_text("new", encoding="utf-8")
     known_files = {old_file}
 
-    output_path = tmp_path / "exports" / "account_balances" / "acc_balance_2025-01-31.xlsx"
+    output_path = (
+        tmp_path / "exports" / "account_balances" / "acc_balance_2025-01-31.xlsx"
+    )
     moved = move_latest_download_since(downloads_dir, output_path, known_files)
 
     assert moved == output_path
@@ -385,7 +451,10 @@ def test_account_balances_uses_direct_download_after_search(mock_page):
                 "/tmp/exports/account_balances/acc_balance_2025-01-31.xlsx"
             ),
         ) as save_download,
-        patch("app.downloaders.ensure_dir", return_value=Path("/tmp/exports/account_balances")),
+        patch(
+            "app.downloaders.ensure_dir",
+            return_value=Path("/tmp/exports/account_balances"),
+        ),
     ):
         download_report_for_month(session, config, "account_balances", period)
 

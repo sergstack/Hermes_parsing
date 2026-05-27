@@ -71,12 +71,16 @@ def _click_export(page: Page) -> None:
             count = loc.count()
             if count == 0:
                 continue
-            logger.info("download | export button | selector=%r count=%s", selector, count)
+            logger.info(
+                "download | export button | selector=%r count=%s", selector, count
+            )
             loc.first.click(timeout=5000)
             logger.info("download | export button clicked | selector=%r", selector)
             return
         except Exception as exc:  # noqa: BLE001
-            logger.debug("download | export button | selector=%r failed: %s", selector, exc)
+            logger.debug(
+                "download | export button | selector=%r failed: %s", selector, exc
+            )
             last_error = exc
     raise RuntimeError("Export button not found") from last_error
 
@@ -396,7 +400,9 @@ def _wait_for_new_export_row(
                 return
             if status == "fail":
                 raise RuntimeError(f"Export id={row_id} failed on server (status=fail)")
-        logger.info("download | api-poll | no new ready row yet, waited %sms", waited_ms)
+        logger.info(
+            "download | api-poll | no new ready row yet, waited %sms", waited_ms
+        )
         session.page.wait_for_timeout(poll_interval_ms)
         waited_ms += poll_interval_ms
     raise RuntimeError(f"No new export row became ready within {timeout_ms}ms")
@@ -422,7 +428,11 @@ def _save_download(
     _trigger_export_with_marker + _wait_for_export_ready_by_name +
     _download_from_history directly in download_report_for_month.
     """
-    logger.info("download | mode=%s | target=%s", "history" if via_history else "direct", output_path)
+    logger.info(
+        "download | mode=%s | target=%s",
+        "history" if via_history else "direct",
+        output_path,
+    )
     if via_history:
         _step("export click start")
         _click_export(page)
@@ -477,7 +487,11 @@ def download_report_for_month(
     page = session.page
     target_dir = ensure_dir(config.download_dir / report.export_dir)
     url = report.build_url(config.base_url.rstrip("/"), month_period)
-    use_end_date = not report.append_month_to_filename and report.payment_date_filter and report.single_date_filter
+    use_end_date = (
+        not report.append_month_to_filename
+        and report.payment_date_filter
+        and report.single_date_filter
+    )
     export_file_name = (
         f"{report.file_prefix}_{month_period.label}.xlsx"
         if report.append_month_to_filename
@@ -639,6 +653,9 @@ def download_report_for_month(
                         _via_history_baseline = _snapshot_history_top_row(
                             page, config.timeout_ms
                         )
+                        _step("export click start")
+                        _click_export(page)
+                        _step("export click done")
                         page.wait_for_timeout(report.wait_after_export_ms)
                         _wait_for_history_refresh(
                             page, _via_history_baseline, config.timeout_ms
