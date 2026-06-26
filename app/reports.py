@@ -36,6 +36,7 @@ class ReportDefinition:
     select_filters: tuple[tuple[str, str], ...] = ()
     # Explicit UI checkbox filters to apply before export.
     checkbox_filters: tuple[tuple[str, bool], ...] = ()
+    clear_text_input_labels: tuple[str, ...] = ()
     repeat_each_month: bool = True
     file_prefix: str = "raw"
     append_month_to_filename: bool = True
@@ -126,14 +127,9 @@ def _build_account_balances_url(base_url: str, period: MonthPeriod) -> str:
     end = period.end.strftime("%Y-%m-%d")
     return (
         f"{base_url}/ledger/reports/account_balance_report?"
-        # Visible UI criteria from the Herm Finance screen:
-        # - date = last day of month
-        # - EUR currency
-        # - exclude zero balances, closed accounts, and archived accounts
-        # - keep blocked and cashbox accounts excluded by the current screen defaults
-        # - hide owner accounts (is_holder=false)
-        f"date={end}&exclude_zero_balances=1&exclude_blocked=0"
-        "&exclude_closed=1&exclude_moneyboxes=0&exclude_archived=1&is_holder=false"
+        f"date={end}&exclude_zero_balances=0&exclude_blocked=0"
+        "&exclude_closed=0&exclude_moneyboxes=0&exclude_archived=1&is_holder=false"
+        "&reportCurrencyId=5"
     )
 
 
@@ -164,6 +160,7 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         apply_search_before_export=True,
         use_export_marker=True,
         file_prefix="demands",
+        clear_text_input_labels=("ID заявки",),
     ),
     "dds_expenses": ReportDefinition(
         "dds_expenses",

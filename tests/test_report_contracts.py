@@ -135,6 +135,25 @@ def test_one_shot_reports_do_not_repeat_or_append_month():
         assert report.append_month_to_filename is False
 
 
+def test_applications_clear_request_id_before_export():
+    assert REPORT_DEFINITIONS["applications"].clear_text_input_labels == ("ID заявки",)
+
+
+def test_account_balances_applies_required_ui_filters():
+    report = REPORT_DEFINITIONS["account_balances"]
+
+    assert report.single_date_filter is True
+    assert report.date_filter_label == "Дата"
+    assert report.select_filters == (
+        ("Отчетная валюта", "EUR"),
+        ("Нулевые остатки", "--"),
+        ("Заблокированные", "--"),
+        ("Закрытые счета", "--"),
+        ("Счета-копилки", "--"),
+        ("Архивные счета", "Исключить"),
+    )
+
+
 def test_budget_rows_periods_run_until_current_year_end():
     periods = app_main._periods_for_report(
         "budget_rows", "2026-03-01", today=date(2026, 4, 17)

@@ -46,7 +46,7 @@ from app.reports import (
         ),
         (
             _build_account_balances_url,
-            "https://herm.finance/ledger/reports/account_balance_report?date=2026-03-31&exclude_zero_balances=1&exclude_blocked=0&exclude_closed=1&exclude_moneyboxes=0&exclude_archived=1&is_holder=false",
+            "https://herm.finance/ledger/reports/account_balance_report?date=2026-03-31&exclude_zero_balances=0&exclude_blocked=0&exclude_closed=0&exclude_moneyboxes=0&exclude_archived=1&is_holder=false&reportCurrencyId=5",
         ),
         (
             _build_cons_budget_url,
@@ -86,6 +86,7 @@ def test_budget_rows_date_filter_label():
 def test_applications_uses_export_marker():
     """applications must still use the filename-popover flow after refactor."""
     assert REPORT_DEFINITIONS["applications"].use_export_marker is True
+    assert REPORT_DEFINITIONS["applications"].clear_text_input_labels == ("ID заявки",)
 
 
 def test_dds_uses_export_marker():

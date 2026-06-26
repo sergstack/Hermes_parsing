@@ -116,7 +116,7 @@ def test_main_dry_run_plans_cons_budget_for_full_year(tmp_path, monkeypatch):
     assert '"report_code": "cons_budget"' in summary_text
     assert '"period": "2025-01"' in summary_text
     assert (
-        str(tmp_path / "exports" / "cons_budget" / "cons_budget_2026-04-30.xlsx")
+        str(tmp_path / "exports" / "cons_budget" / "cons_budget_2026-05-31.xlsx")
         in summary_text
     )
 

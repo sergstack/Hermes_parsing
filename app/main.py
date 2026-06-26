@@ -70,10 +70,10 @@ def _cons_budget_periods(today: date | None = None) -> list[MonthPeriod]:
 
 def _periods_for_report(report_code: str, start_date: str, today: date | None = None):
     if report_code == "budget_rows":
-        return build_months_range_until_year_end(start_date)
+        return build_months_range_until_year_end(start_date, today=today)
     if report_code == "cons_budget":
         return _cons_budget_periods(today)
-    return build_months_range(start_date)
+    return build_months_range(start_date, today=today)
 
 
 def _build_planned_reports(config, report_codes: list[str]) -> list[dict]:

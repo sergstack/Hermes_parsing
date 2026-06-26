@@ -124,6 +124,44 @@ def test_apply_search_for_dds_expenses_sets_exclude_reserve_before_show(mock_pag
     assert events == ["reserve:исключить", "show"]
 
 
+def test_apply_search_can_clear_text_input_before_show(mock_page):
+    events = []
+    show_button = MagicMock()
+    primary_buttons = MagicMock()
+    primary_buttons.filter.return_value = show_button
+    show_button.count.return_value = 1
+    form_items = MagicMock()
+    form_item = MagicMock()
+    inputs = MagicMock()
+    input_field = MagicMock()
+
+    form_items.filter.return_value.first = form_item
+    form_item.locator.return_value = inputs
+    inputs.count.return_value = 1
+    inputs.nth.return_value = input_field
+    input_field.fill.side_effect = lambda *args, **kwargs: events.append("clear")
+    show_button.first.click.side_effect = lambda *args, **kwargs: events.append("show")
+
+    mock_page.locator.side_effect = lambda selector: (
+        form_items
+        if selector == ".el-form-item"
+        else primary_buttons
+        if selector == "button.el-button--primary.el-button--small"
+        else MagicMock()
+    )
+
+    _apply_search(
+        mock_page,
+        15000,
+        done_selector=None,
+        clear_text_input_labels=("ID заявки",),
+    )
+
+    form_items.filter.assert_called_once_with(has_text="ID заявки")
+    input_field.fill.assert_called_once_with("", timeout=3000)
+    assert events == ["clear", "show"]
+
+
 def test_trigger_export_with_marker_calls_click_and_enter(mock_page):
     """_trigger_export_with_marker must click the export button then fill the popover."""
     with (
@@ -360,16 +398,17 @@ def test_set_single_date_by_label_fills_input(mock_page):
     from app.downloaders import _set_single_date_by_label
 
     form_item = MagicMock()
-    input_locators = MagicMock()
-    input_locators.count.return_value = 1
-    input_locators.first = MagicMock()
-    form_item.locator.return_value = input_locators
+    field = MagicMock()
+    field.input_value.return_value = "31.05.26"
+    form_item.locator.return_value.first = field
     mock_page.locator.return_value.filter.return_value.first = form_item
 
     _set_single_date_by_label(mock_page, "Дата", "31.05.26")
 
-    input_locators.first.focus.assert_called_once_with(timeout=10000)
-    input_locators.first.fill.assert_called_once_with("31.05.26", timeout=3000)
+    field.wait_for.assert_called_once_with(state="visible", timeout=10000)
+    field.click.assert_called_once_with(timeout=10000)
+    field.fill.assert_called_once_with("31.05.26", timeout=3000)
+    field.input_value.assert_called_once_with(timeout=3000)
 
 
 def test_candidate_export_names_supports_month_end_date():

@@ -28,6 +28,7 @@ from .export_files import (
     determine_extension as _determine_extension,
     move_latest_download as _move_latest_download,
     move_download as _move_download,
+    repair_xlsx_dimension as _repair_xlsx_dimension,
     save_export_bytes as _save_export_bytes,
 )
 from .selectors import (
@@ -130,13 +131,56 @@ def _set_checkbox_by_label(page: Page, label_text: str, checked: bool) -> None:
     page.wait_for_timeout(200)
 
 
+def _clear_text_inputs_by_label(page: Page, labels: tuple[str, ...]) -> None:
+    for label in labels:
+        form_item = page.locator(".el-form-item").filter(has_text=label).first
+        inputs = form_item.locator("input.el-input__inner")
+        for index in range(inputs.count()):
+            field = inputs.nth(index)
+            field.fill("", timeout=3000)
+            field.evaluate(
+                """(el) => {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(el, '');
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }"""
+            )
+            page.wait_for_timeout(100)
+
+
 def _set_single_date_by_label(page: Page, label_text: str, value: str) -> None:
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:  # noqa: BLE001
+        pass
     form_item = page.locator(".el-form-item").filter(has_text=label_text).first
-    inputs = form_item.locator("input")
-    inputs.first.focus(timeout=10000)
-    page.keyboard.press("Control+A")
-    inputs.first.fill(value, timeout=3000)
+    field = form_item.locator("input.el-input__inner").first
+    field.wait_for(state="visible", timeout=10000)
+    field.click(timeout=10000)
+    field.fill(value, timeout=3000)
+    field.evaluate(
+        """(el, value) => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.blur();
+        }""",
+        value,
+    )
     page.wait_for_timeout(200)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(150)
+    page.mouse.click(4, 4)
+    page.wait_for_timeout(300)
+
+    actual = field.input_value(timeout=3000)
+    if actual != value:
+        raise RuntimeError(
+            f"Date filter '{label_text}' was not applied: expected {value}, got {actual!r}"
+        )
 
 
 def _set_date_range_by_label(page: Page, label_text: str, start: str, end: str) -> None:
@@ -188,6 +232,7 @@ def _apply_search(
     single_date_filter: bool = False,
     select_filters: tuple[tuple[str, str], ...] = (),
     checkbox_filters: tuple[tuple[str, bool], ...] = (),
+    clear_text_input_labels: tuple[str, ...] = (),
 ) -> None:
     if pre_wait_ms:
         page.wait_for_timeout(pre_wait_ms)
@@ -202,6 +247,8 @@ def _apply_search(
         _set_select_value_by_label(page, label_text, value)
     for label_text, checked in checkbox_filters:
         _set_checkbox_by_label(page, label_text, checked)
+    if clear_text_input_labels:
+        _clear_text_inputs_by_label(page, clear_text_input_labels)
     if reserves_filter_value:
         _set_reserves_filter(page, reserves_filter_value)
     show_button = page.locator("button.el-button--primary.el-button--small").filter(
@@ -746,6 +793,7 @@ def download_report_for_month(
                     single_date_filter=report.single_date_filter,
                     select_filters=report.select_filters,
                     checkbox_filters=report.checkbox_filters,
+                    clear_text_input_labels=report.clear_text_input_labels,
                 )
                 _step("apply search done")
             strategy = _select_download_strategy(report)
@@ -786,6 +834,8 @@ def download_report_for_month(
                     output_path,
                 )
             log_result(report_code, month_period, "saved", str(saved_path))
+            if report_code == "account_balances" and saved_path.suffix == ".xlsx" and saved_path.exists():
+                _repair_xlsx_dimension(saved_path)
             return DownloadResult(True, saved_path, attempts=attempt)
         except PlaywrightTimeoutError as exc:
             logger.warning(

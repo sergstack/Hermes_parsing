@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import json
+import time
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -20,8 +22,45 @@ from .config import AppConfig
 logger = logging.getLogger(__name__)
 
 
+def _read_cookies(session_file: Path) -> list[dict]:
+    try:
+        return json.loads(session_file.read_text(encoding="utf-8")).get("cookies", [])
+    except Exception:
+        return []
+
+
+def _session_cookies_valid(session_file: Path) -> bool:
+    now = time.time()
+    for cookie in _read_cookies(session_file):
+        name: str = cookie.get("name", "")
+        exp: float = cookie.get("expires", -1)
+        if "session" in name and exp > 0 and exp < now:
+            logger.info(
+                "auth | session cookie '%s' expired at %s, re-authentication required",
+                name,
+                exp,
+            )
+            return False
+    return True
+
+
+def _remember_token_valid(session_file: Path) -> bool:
+    now = time.time()
+    for cookie in _read_cookies(session_file):
+        name: str = cookie.get("name", "")
+        exp: float = cookie.get("expires", -1)
+        if name.startswith("remember_web") and (exp < 0 or exp > now):
+            return True
+    return False
+
+
 def load_session_state(session_file: Path) -> bool:
-    return session_file.exists() and session_file.stat().st_size > 0
+    return (
+        session_file.exists()
+        and session_file.stat().st_size > 0
+        and _session_cookies_valid(session_file)
+    )
+
 
 
 def save_session_state(session: BrowserSession, session_file: Path) -> None:

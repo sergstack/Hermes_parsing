@@ -1,0 +1,49 @@
+id: hermes_monthly
+namespace: finance.hermes
+
+description: |
+  Monthly download of financial reports from herm.finance.
+  Runs on the 1st of each month at 09:00 Moscow time (UTC+3 → UTC 06:00).
+
+  Steps:
+    1. refresh-session  — renews hermes_session via the long-lived remember_web cookie (headless)
+    2. download-reports — downloads all configured report types for new months
+
+triggers:
+  - id: monthly_cron
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 1 * *"   # 09:00 MSK = 06:00 UTC
+
+tasks:
+  - id: refresh-session
+    type: io.kestra.plugin.scripts.python.Commands
+    namespaceFiles:
+      enabled: true
+    commands:
+      - python -m app.cmd_auth --headless
+    env:
+      PYTHONPATH: "."
+    # Exit 0  → session valid / refreshed; continue
+    # Exit 1  → headless refresh failed; remember_web expired — alert
+    # Exit 2  → unexpected error — alert
+    allowFailure: false
+
+  - id: download-reports
+    type: io.kestra.plugin.scripts.python.Commands
+    namespaceFiles:
+      enabled: true
+    commands:
+      - python -m app.cmd_download
+    env:
+      PYTHONPATH: "."
+    allowFailure: false
+
+errors:
+  - id: notify-failure
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Hermes monthly flow FAILED.
+      Task: {{ task.id }}
+      Error: {{ error.message }}
+      Action required: check remember_web cookie expiry or herm.finance availability.
+    level: ERROR
