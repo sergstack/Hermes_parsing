@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import PROJECT_ROOT, resolve_project_path
-
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -23,13 +21,17 @@ class AppConfig:
     repeat_each_month: bool = False
     config_path: Path | None = None
 
-    def resolved(self, project_root: Path = PROJECT_ROOT) -> "AppConfig":
+    def resolved(self, project_root: Path) -> "AppConfig":
         """Resolve relative paths against the project root."""
         return AppConfig(
             start_date=self.start_date,
             base_url=self.base_url,
-            download_dir=resolve_project_path(self.download_dir, project_root),
-            session_file=resolve_project_path(self.session_file, project_root),
+            download_dir=(project_root / self.download_dir).resolve()
+            if not self.download_dir.is_absolute()
+            else self.download_dir.resolve(),
+            session_file=(project_root / self.session_file).resolve()
+            if not self.session_file.is_absolute()
+            else self.session_file.resolve(),
             headless=self.headless,
             overwrite=self.overwrite,
             timeout_ms=self.timeout_ms,
@@ -58,10 +60,15 @@ def _parse_line(line: str) -> tuple[str, str] | None:
     return key.strip(), value.strip()
 
 
+def normalize_config(config: AppConfig, project_root: Path | None = None) -> AppConfig:
+    """Resolve relative config paths against project_root or the current working tree."""
+    return config.resolved(project_root or Path.cwd())
+
+
 def read_config(config_path: str | Path = "config/config.txt") -> AppConfig:
     """Read a minimal key=value config file."""
 
-    path = resolve_project_path(config_path)
+    path = Path(config_path)
     raw: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         parsed = _parse_line(line)

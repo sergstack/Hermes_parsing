@@ -7,29 +7,47 @@ from pathlib import Path
 from .dates import MonthPeriod
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
-def resolve_project_path(path: str | Path, project_root: Path = PROJECT_ROOT) -> Path:
-    """Resolve a project-relative runtime path without depending on shell cwd."""
-    candidate = Path(path)
-    if candidate.is_absolute():
-        return candidate.resolve()
-    return (project_root / candidate).resolve()
-
-
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def build_output_path(download_dir: Path, report_code: str, period: MonthPeriod, ext: str, prefix: str = "raw") -> Path:
+def build_output_path(
+    download_dir: Path,
+    report_code: str,
+    period: MonthPeriod,
+    ext: str,
+    prefix: str = "raw",
+    use_end_date: bool = False,
+) -> Path:
     safe_ext = ext if ext.startswith(".") else f".{ext}"
-    return download_dir / report_code / f"{prefix}_{period.label}{safe_ext}"
+    date_label = period.end.strftime("%Y-%m-%d") if use_end_date else period.label
+    return download_dir / report_code / f"{prefix}_{date_label}{safe_ext}"
 
 
-def existing_output_paths(download_dir: Path, report_code: str, period: MonthPeriod) -> list[Path]:
-    return sorted((download_dir / report_code).glob(f"*_{period.label}*"))
+def build_output_directory(download_dir: Path, report_code: str) -> Path:
+    return download_dir / report_code
+
+
+def existing_output_paths(
+    download_dir: Path, report_code: str, period: MonthPeriod
+) -> list[Path]:
+    directory = download_dir / report_code
+    # Primary pattern: matches "prefix_YYYY-MM.ext" (most reports)
+    results = set(directory.glob(f"*_{period.label}.*"))
+    # Also match "prefix_YYYY-MM-DD.ext" (e.g. acc_balance_2025-01-31.xlsx)
+    # because some reports use end-of-month date instead of YYYY-MM label.
+    results |= set(directory.glob(f"*_{period.label}-??.*"))
+    # Match year-end exports that use a single annual period but save as YYYY-12-31.
+    if (
+        period.start.year == period.end.year
+        and period.start.month == 1
+        and period.start.day == 1
+        and period.end.month == 12
+        and period.end.day == 31
+    ):
+        results |= set(directory.glob(f"*_{period.start.year}-12-31.*"))
+    return sorted(results)
 
 
 def normalize_download_name(filename: str, fallback_ext: str = ".bin") -> str:

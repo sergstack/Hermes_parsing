@@ -4,12 +4,13 @@ from app.reports import REPORT_DEFINITIONS
 def test_report_catalog_contracts():
     expected = {
         "applications": ("demands", "demands", True, True),
-        "dds_expenses": ("p-fact", "p-fact", True, False),
+        "dds_expenses": ("dds", "dds", True, False),
+        "p-fact": ("p-fact", "p-fact", True, False),
         "dds": ("dds", "dds", True, True),
         "budget_rows": ("budget_rows", "raw", True, True),
         "cons_budget": ("cons_budget", "cons_budget", False, False),
         "contractors": ("contractors", "contractors", False, True),
-        "account_balances": ("account_balances", "raw", True, False),
+        "account_balances": ("account_balances", "acc_balance", True, False),
     }
 
     assert set(REPORT_DEFINITIONS) == set(expected)
@@ -26,7 +27,14 @@ def test_account_balances_applies_required_ui_filters():
 
     assert rd.single_date_filter is True
     assert rd.date_filter_label == "Дата"
-    assert rd.select_filters == (("Отчетная валюта", "EUR"), ("Нулевые остатки", "--"), ("Закрытые счета", "--"))
+    assert rd.select_filters == (
+        ("Отчетная валюта", "EUR"),
+        ("Нулевые остатки", "--"),
+        ("Заблокированные", "--"),
+        ("Закрытые счета", "--"),
+        ("Счета-копилки", "--"),
+        ("Архивные счета", "Исключить"),
+    )
 
 
 def test_report_api_endpoint_contracts():

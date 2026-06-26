@@ -1,78 +1,24 @@
 # Herm Finance monthly exporter
 
-## Project scope
+Python + Playwright exporter for Herm Finance reports. The project keeps report
+definitions in code, writes downloaded files to local runtime folders, and
+supports a dry-run mode for reviewer-friendly validation without opening a
+browser or starting a live export.
 
-This repository currently implements a Herm Finance Excel exporter.
+## Quick reviewer setup
 
-Current responsibility:
+```bash
+git clone https://github.com/sergstack/Hermes_parsing.git
+cd Hermes_parsing
 
-- authenticate to Herm Finance with Playwright;
-- open configured report UI/API endpoints;
-- export Excel files;
-- save outputs under `exports/`;
-- write run logs under `logs/`.
+python3 -m venv .venv
+source .venv/bin/activate
 
-Not current responsibility:
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
-- stage/mart/report transformation;
-- financial reconciliation;
-- dashboarding;
-- database loading.
-
-Current data flow:
-
-```text
-config/config.txt
--> login/session
--> report definitions
--> Playwright UI/API download
--> exports/
--> logs/
+python -m pytest -q
 ```
-
-## Runtime folders and sensitive files
-
-| Path | Purpose | Git / safety note |
-|---|---|---|
-| `exports/` | Generated Excel exports | Runtime output; do not commit |
-| `logs/` | Run logs and debug logs | Runtime output |
-| `output/` | Debug/output artifacts such as screenshots | Runtime output |
-| `state/` | Browser/session runtime state | Runtime state |
-| `state/herm_session.json` | Browser session storage | Sensitive; do not open, print, share, or commit |
-| `config/config.txt` | Local runtime configuration | Sensitive/local; do not print, share, or commit |
-
-## Safe operating rules
-
-- Run a full export only intentionally; it can touch Herm Finance, session state, logs, and `exports/`.
-- Check `overwrite` in `config/config.txt` before reruns.
-- Do not open, print, or share session/config contents.
-- Treat `exports/` as raw source material for downstream analytics, not as Mart output.
-- If downstream Mart or analytics work is needed, create a separate SPEC before implementation.
-
-## Refactor status and validation
-
-- `POST_REFACTOR_STATUS.md` — current safe offline refactor status and production-readiness classification.
-- `OFFLINE_SMOKE.md` — safe smoke command that does not run the live exporter.
-- `LIVE_VALIDATION_PLAN.md` — operator-only live validation plan; Codex must not run it without explicit approval.
-- `CODEX_REFACTOR_FINAL_REPORT.md` — evidence report for the safe refactor iteration.
-
-## Future Mart / analytics layer
-
-Planning artifacts may describe a future analytics layer, but that layer is not currently implemented unless matching `src/pipeline/...` and `data/...` folders exist.
-
-The current exporter remains separate from any future stage/mart/report pipeline. Mart implementation, financial reconciliation, report generation, or dashboarding requires a separate scoped task.
-
-## Current code layout
-
-The exporter code is split by responsibility:
-
-- `app/main.py` — run entrypoint and high-level orchestration.
-- `app/reports.py` — report catalog, URL builders, export folders, file prefixes, and UI behavior flags.
-- `app/downloaders.py` — compatibility facade for report download flow.
-- `app/export_flows.py` — reusable Playwright export UI primitives.
-- `app/export_history.py` — export history row matching and polling helpers.
-- `app/output_writer.py` — output filename, extension, move, and byte-save helpers.
-- `app/orchestration.py` and `app/run_summary.py` — pure run-period selection and summary accounting helpers.
 
 ## Installation
 
@@ -83,7 +29,13 @@ The exporter code is split by responsibility:
 pip install -r requirements.txt
 ```
 
-3. Install Playwright browsers:
+3. Install development dependencies if you plan to run tests or lint:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+4. Install Playwright browsers for live exports:
 
 ```bash
 playwright install
@@ -91,7 +43,14 @@ playwright install
 
 ## Configuration
 
-`config/config.txt` — основной конфигурационный файл:
+Create a local config from the public example:
+
+```bash
+cp config/config.example.txt config/config.local.txt
+```
+
+`config/config.local.txt` or `config/config.txt` can be used as the local
+runtime configuration file:
 
 | Параметр | Описание | Пример |
 |---|---|---|
@@ -103,22 +62,51 @@ playwright install
 | `overwrite` | Перезаписывать существующие файлы | `false` |
 | `timeout_ms` | Таймаут операций (мс) | `60000` |
 | `slow_mo` | Замедление Playwright (мс) | `0` |
-
-Относительные пути в `config/config.txt` разрешаются от корня репозитория, а не от текущей папки запуска. Абсолютные пути остаются абсолютными.
+| `repeat_each_month` | Повторять непомесячные отчёты каждый месяц | `false` |
 
 **Конечная дата** вычисляется автоматически: текущий месяц − 1.  
 При `overwrite=false` скрипт проверяет наличие файлов и скачивает только пропуски.
 
+Do not commit private runtime files:
+
+- `config/config.txt`
+- `config/config.local.txt`
+- `state/`
+- `exports/`
+- `logs/`
+- `.env` and `.env.*`
+
 ## Run
 
+Dry-run without a browser or live Herm Finance export:
+
 ```bash
-python -m app.main
+python -m app.main --config config/config.local.txt --dry-run --reports dds --headless true
 ```
 
-На macOS можно запускать готовый wrapper:
+Run the configured live export:
 
 ```bash
-./run_hermes.command
+python -m app.main --config config/config.local.txt
+```
+
+Live export requires manual Herm Finance login and must not be run in CI. Do not
+run a live export unless you intend to use the configured Herm Finance account.
+
+### CLI options
+
+- `--config config/config.txt` to use a different config file.
+- `--reports applications,dds` to limit the run to selected report codes.
+- `--dry-run` to plan exports without opening a browser.
+- `--headless true|false` to override the config value.
+- `--overwrite true|false` to override the config value.
+
+Dry-run writes a machine-readable plan to `logs/summary.json`.
+
+## Tests
+
+```bash
+python -m pytest -q
 ```
 
 ## First login
@@ -129,53 +117,41 @@ python -m app.main
 
 Файлы сохраняются в `./exports/<папка_отчёта>/<префикс>_YYYY-MM.xlsx`.
 
-Исключения:
+Runtime output directories:
 
-- `contractors` сохраняется один раз: `./exports/contractors/contractors.xlsx`.
-- `account_balances` сохраняется по дате конца месяца: `./exports/account_balances/acc_balance_YYYY-MM-DD.xlsx`.
-- `cons_budget` сохраняется один раз: `./exports/cons_budget/cons_budget.xlsx`.
+- `exports/` — downloaded report files.
+- `logs/` — run logs and dry-run summary output.
+- `state/` — browser session state.
 
-## Successful path
-
-Проверенный успешный запуск:
-
-```bash
-.venv/bin/python -m pytest tests/test_downloaders.py tests/test_urls.py tests/test_paths.py
-./run_hermes.command
-```
-
-Ожидаемый итог полного запуска: `summary | success=90 | error=0 | failed=none`.
-
-Проверенный набор выгрузок:
-
-- `applications`: 2025-01 ... 2026-04.
-- `dds_expenses`: 2025-01 ... 2026-04.
-- `dds`: 2025-01 ... 2026-04.
-- `budget_rows`: 2025-01 ... 2026-12.
-- `cons_budget`: с 01.01 прошлого года до 31.12 текущего года.
-- `contractors`: один файл справочника.
-- `account_balances`: 2025-01 ... 2026-04.
-
-## Move notes
-
-- `.venv/` and `venv/` are disposable local environments; recreate the virtual environment after moving the repository.
-- `config/config.txt`, `state/`, `exports/`, and `logs/` are runtime state. Decide explicitly whether to migrate them before moving.
-- `.claude/worktrees` contains linked worktree state and must be handled separately before moving.
-- Target-specific validation remains pending until the target path is known.
+Completed one-off task artifacts are archived under `docs/tasks/`.
 
 ## Supported reports
 
 | Код | Папка | Префикс файла | Метод выгрузки |
 |---|---|---|---|
 | `applications` | `demands` | `demands` | UI: кнопка «Скачать» → popover с именем файла → история выгрузок |
-| `dds_expenses` | `p-fact` | `p-fact` | UI: «Показать» → «Экспортировать всё» |
+| `dds_expenses` | `dds` | `dds` | UI: «Показать» → «Экспортировать всё» → история выгрузок |
+| `p-fact` | `p-fact` | `p-fact` | UI: «Показать» → «Экспортировать всё» → история выгрузок |
 | `dds` | `dds` | `dds` | UI: фильтр «Дата начисления» → кнопка поиска → «Скачать .xlsx» |
 | `budget_rows` | `budget_rows` | `raw` | UI: «Скачать .xlsx» → popover с именем файла → история выгрузок |
-| `cons_budget` | `cons_budget` | `cons_budget` | UI: фильтры → «Показать» → «Экспортировать всё» |
-| `contractors` | `contractors` | `contractors` | API: POST `/api/resources/contractor/export` → polling (один раз) |
-| `account_balances` | `account_balances` | `acc_balance` | UI: «Показать» → «Экспортировать всё» |
+| `contractors` | `contractors` | `contractors` | UI: кнопка «Скачать» → popover с именем файла → история выгрузок |
+| `account_balances` | `account_balances` | `acc_balance` | UI: «Показать» → «Скачать» → перенос свежего `.xlsx` из `Downloads` |
+| `cons_budget` | `cons_budget` | `cons_budget` | UI: полный год → «Показать» → «Экспортировать всё» → прямое скачивание |
 
-## Фильтры отчёта p-fact (dds_expenses)
+## Фильтры отчёта account_balances
+
+| Параметр | Значение |
+|---|---|
+| Дата | последняя дата месяца |
+| Отчётная валюта | EUR |
+| Нулевые остатки | исключить |
+| Заблокированные | исключить |
+| Закрытые счета | исключить |
+| Счета-кошельки | исключить |
+| Архивные счета | исключить |
+| Мои счета | выключено |
+
+## Фильтры отчёта p-fact
 
 | Параметр | Значение |
 |---|---|
@@ -185,23 +161,26 @@ python -m app.main
 | Отчётная валюта | EUR |
 | ВГО / Учредители / Биллинги / Фин. агенты / Резервы | исключить |
 
-> Дропдаун «Резервы» не подхватывает URL-параметр `excludeReserve=1` автоматически —
+> Дропдаун «Резервы» не подхватывает URL-параметр `excludeReserve=2` автоматически —
 > скрипт программно кликает опцию «исключить» после загрузки страницы.
 
+## Фильтры отчёта cons_budget
+
+| Параметр | Значение |
+|---|---|
+| Период | полный год из `dates_period[0]` и `dates_period[1]` |
+| Статусы | все выбранные в URL |
+| Уровень | 3 |
+| ЦФО | пусто |
+| Проекты | `Azp_admin` |
+| ВГО | исключить |
+| Отображать столбцы | `План-факт` |
+| Отображать отклонение | выключено |
+| План/факт / IN-OUT(текущий) | пусто |
+| План/факт / IN-OUT(предыдущий) | пусто |
+| Отчётная валюта | EUR |
+
 ## Методы выгрузки
-
-### Используемые UI-элементы
-
-| Назначение | Название в UI | Селектор / метод |
-|---|---|---|
-| Показать отчёт | `Показать` | `button:has-text('Показать')`; fallback: `button.el-button--primary.el-button--small` |
-| Экспортировать весь грид | `Экспортировать всё` | `page.get_by_role("button", name="Экспортировать всё")`; fallback: `div.dx-datagrid-export-button[aria-label='Экспортировать всё']`, `.dx-datagrid-export-button`, `[title='Экспортировать всё']` |
-| Скачать / открыть popover имени файла | `Скачать` / `Скачать .xlsx` | `button:has-text('Скачать')`, `a:has-text('Скачать')` |
-| Поле имени файла в popover | `Имя файла можно изменить` | `.el-popover.export-popper-class` + `input.el-input__inner` |
-| Подтвердить имя файла | `Загрузить` | `button.el-button:has-text('Загрузить')` |
-| История выгрузок | иконка в шапке | `button.files-button` |
-| Скачать файл из истории | кнопка скачивания в строке | `td:not(.dx-hidden-cell) button.download-button` |
-| Фильтр «Резервы» | `Резервы` | 9-й `.el-select`, то есть `.el-select.nth(8)`, затем `.el-select-dropdown__item` с текстом `исключить` |
 
 ### UI-метод с popover (`applications`)
 
@@ -214,14 +193,13 @@ python -m app.main
 5. Выдержать паузу 5 секунд (формирование файла на сервере).
 6. Нажать кнопку истории выгрузок (`files-button` в шапке).
 7. В появившемся списке кликнуть первую кнопку скачивания (`download-button`).
-8. Сохранить браузерный download через `download.save_as(...)`, затем перенести временный файл в `exports/demands/demands_YYYY-MM.xlsx`.
 
 > **Важно:** DevExtreme рендерит каждую строку грида дважды — видимая копия находится
 > в фиксированной колонке, а дубликат в прокручиваемой области скрыт классом
 > `dx-hidden-cell`. Для поиска кнопки используется селектор
 > `td:not(.dx-hidden-cell) button.download-button`.
 
-### UI-метод прямого скачивания (`dds_expenses` / p-fact)
+### UI-метод через историю (`dds_expenses` / p-fact)
 
 Применяется для отчёта «План-Факт по ДДС (траты)».
 
@@ -229,12 +207,9 @@ python -m app.main
 2. Подождать 2 секунды, чтобы Vue применил URL-параметры к дропдаунам.
 3. Программно выбрать «исключить» в дропдауне «Резервы» (индекс 8 среди `.el-select`).
 4. Нажать «Показать» — ждать `networkidle`.
-5. Нажать кнопку «Экспортировать всё» в самом гриде: основной метод `page.get_by_role("button", name="Экспортировать всё")`, fallback-селектор `.dx-datagrid-export-button`.
-6. Принять прямое браузерное скачивание через `page.expect_download(...)`.
-7. Сохранить файл через `download.save_as(...)` в `exports/p-fact/p-fact_YYYY-MM.xlsx`.
-
-> Для `p-fact` не используется кнопка истории выгрузок `files-button` в верхней панели.
-> Скачивание должно идти только через кнопку `Экспортировать всё` внутри грида отчёта.
+5. Нажать кнопку «Экспортировать всё» (`.dx-datagrid-export-button`).
+6. Выдержать паузу 3 секунды (формирование файла на сервере).
+7. Нажать кнопку истории выгрузок (`files-button`) и скачать первый файл.
 
 ### UI-метод через popover (`dds`)
 
@@ -247,23 +222,28 @@ python -m app.main
 5. Ввести имя `dds_YYYY-MM` → нажать «Загрузить».
 6. Выдержать паузу 5 секунд (формирование файла на сервере).
 7. Нажать кнопку истории выгрузок (`files-button`) и скачать первый файл.
-8. Сохранить браузерный download через `download.save_as(...)`, затем перенести временный файл в `exports/dds/dds_YYYY-MM.xlsx`.
 
 > **Важно:** на странице `DDS` есть несколько кнопок с иконкой поиска. Первая search-кнопка
 > относится к полю «Банковский счет» и открывает модальное окно «Банковские счета».
 > Для запуска поиска нужно нажимать кнопку формы фильтров, а не `input-button search-button`.
 
-### UI-метод (`cons_budget`)
+### Прямое скачивание (`account_balances`)
+
+1. Открыть страницу отчёта с фильтрами периода.
+2. Установить дату на последний день месяца и применить фильтры.
+3. Нажать «Показать».
+4. Нажать «Скачать» и дождаться появления свежего `.xlsx` в `~/Downloads`.
+5. Переместить найденный файл в `./exports/account_balances/` и переименовать его в `acc_balance_YYYY-MM-DD.xlsx`.
+
+### UI-метод с прямым скачиванием (`cons_budget`)
 
 Применяется для отчёта «План-факт по конс. бюджету (за период)».
 
-1. Открыть страницу `/budgeting/reports/consolidated_plan_fact_monthly_report`.
-2. Установить период с 01.01 прошлого года до 31.12 текущего года.
-3. Применить фильтры: статусы `На согласовании +4`, уровень `3`, проект `Azp_admin`, ВГО `исключить`, отчётная валюта `EUR`.
-4. Снять чекбоксы: «Отображать отклонения», «План|факт / IN-OUT(текущий)», «План|факт / IN-OUT(предыдущий)».
-5. Нажать «Показать».
-6. Нажать кнопку `Экспортировать всё` и принять прямое браузерное скачивание через `page.expect_download(...)`.
-7. Сохранить файл через `download.save_as(...)` в `exports/cons_budget/cons_budget.xlsx`.
+1. Открыть страницу отчёта с полным годовым периодом и фильтрами из URL.
+2. Подождать 2 секунды, чтобы страница применила параметры.
+3. Нажать «Показать» — ждать `networkidle`.
+4. Нажать кнопку «Экспортировать всё».
+5. Дождаться появления браузерной загрузки и сохранить файл напрямую.
 
 ### API-метод (остальные отчёты)
 
@@ -273,7 +253,6 @@ python -m app.main
 4. Polling `/api/resources/export-file/all` — ждать строку со статусом `ready`
    и `id` выше зафиксированного.
 5. POST `/api/export_files/download/{id}` — получить бинарный файл и сохранить.
-6. Записать ответ в целевой файл через `Path.write_bytes(...)`.
 
 > Некоторые отчёты возвращают `500` на шаге 3 — это ожидаемое поведение.
 > Скрипт логирует предупреждение и переходит к polling, который всё равно
@@ -285,3 +264,9 @@ python -m app.main
   находит готовый файл в `/api/resources/export-file/all`.
 - `contractors` скачивается один раз за весь прогон (не повторяется помесячно),
   т.к. справочник не зависит от периода.
+- `account_balances` скачивается через кнопку «Скачать» и сохраняется как
+  `acc_balance_YYYY-MM-DD.xlsx`, где дата в имени файла соответствует
+  последнему дню месяца.
+- `cons_budget` скачивается через кнопку «Экспортировать всё» и сохраняется как
+  `cons_budget.xlsx` в `exports/cons_budget/`.
+- `logs/summary.json` is written after dry-run and after a normal run.
