@@ -5,6 +5,7 @@ from app.paths import (
     build_output_path,
     existing_output_paths,
     normalize_download_name,
+    resolve_project_path,
 )
 
 
@@ -14,6 +15,16 @@ def test_build_output_directory_returns_report_folder():
     )
 
 
+def test_resolve_project_path_uses_explicit_root_for_relative_paths(tmp_path):
+    assert resolve_project_path("exports", tmp_path) == (tmp_path / "exports").resolve()
+
+
+def test_resolve_project_path_preserves_absolute_paths(tmp_path):
+    absolute = (tmp_path / "exports").resolve()
+
+    assert resolve_project_path(absolute, Path("/other/root")) == absolute
+
+
 def test_build_output_path_uses_prefix_and_suffix(sample_period):
     path = build_output_path(Path("/tmp/exports"), "dds", sample_period, "xlsx", "raw")
     assert path == Path("/tmp/exports/dds/raw_2026-03.xlsx")
@@ -21,7 +32,11 @@ def test_build_output_path_uses_prefix_and_suffix(sample_period):
 
 def test_build_output_path_can_be_relabeled_without_month():
     path = build_output_path(
-        Path("/tmp/exports"), "contractors", type("P", (), {"label": "2026-03"})(), "xlsx", "contractors"
+        Path("/tmp/exports"),
+        "contractors",
+        type("P", (), {"label": "2026-03"})(),
+        "xlsx",
+        "contractors",
     )
     assert path == Path("/tmp/exports/contractors/contractors_2026-03.xlsx")
 
@@ -30,7 +45,11 @@ def test_build_output_path_can_use_month_end_date():
     path = build_output_path(
         Path("/tmp/exports"),
         "account_balances",
-        type("P", (), {"label": "2026-03", "end": __import__("datetime").date(2026, 3, 31)})(),
+        type(
+            "P",
+            (),
+            {"label": "2026-03", "end": __import__("datetime").date(2026, 3, 31)},
+        )(),
         "xlsx",
         "acc_balance",
         use_end_date=True,
@@ -42,7 +61,11 @@ def test_build_output_path_can_use_year_end_date_for_cons_budget():
     path = build_output_path(
         Path("/tmp/exports"),
         "cons_budget",
-        type("P", (), {"label": "2026-01", "end": __import__("datetime").date(2026, 12, 31)})(),
+        type(
+            "P",
+            (),
+            {"label": "2026-01", "end": __import__("datetime").date(2026, 12, 31)},
+        )(),
         "xlsx",
         "cons_budget",
         use_end_date=True,

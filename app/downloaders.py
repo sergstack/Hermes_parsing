@@ -15,6 +15,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from .browser import BrowserSession
 from .config import AppConfig
 from .dates import MonthPeriod
+from .errors import ExportErrorCode
 from .export_api import (
     load_export_rows as _load_export_rows,
     download_export_file as _download_export_file,
@@ -53,6 +54,7 @@ from .paths import (
     normalize_download_name,
 )
 from .reports import REPORT_DEFINITIONS
+from .retry import RetryPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,10 @@ class DownloadResult:
     success: bool
     output_path: Path | None
     error: str | None = None
+    error_code: str | None = None
+    error_stage: str | None = None
+    error_message: str | None = None
+    attempts: int = 1
 
 
 def _click_export(page: Page) -> None:
@@ -524,6 +530,184 @@ def log_result(
     logger.info("%s | %s | %s%s", report_code, label, status, suffix)
 
 
+def _timeout_code_for_stage(stage: str) -> ExportErrorCode:
+    if stage == "page_open":
+        return ExportErrorCode.PAGE_OPEN_TIMEOUT
+    if stage == "apply_search":
+        return ExportErrorCode.SEARCH_APPLY_FAILED
+    if stage == "trigger":
+        return ExportErrorCode.EXPORT_TRIGGER_FAILED
+    if stage in {"status", "export_rows", "marker_history"}:
+        return ExportErrorCode.EXPORT_ROW_TIMEOUT
+    if stage == "history":
+        return ExportErrorCode.EXPORT_HISTORY_STALE
+    if stage in {"direct", "download", "api"}:
+        return ExportErrorCode.DOWNLOAD_TIMEOUT
+    return ExportErrorCode.UNKNOWN
+
+
+def _error_code_for_exception(exc: Exception, stage: str) -> ExportErrorCode:
+    if isinstance(exc, _StageTimeout):
+        return _timeout_code_for_stage(exc.stage)
+    if isinstance(exc, PlaywrightTimeoutError):
+        return _timeout_code_for_stage(stage)
+    if isinstance(exc, PlaywrightError):
+        return ExportErrorCode.PLAYWRIGHT_ERROR
+
+    message = str(exc)
+    if "Export button not found" in message:
+        return ExportErrorCode.EXPORT_BUTTON_NOT_FOUND
+    if "Export history did not refresh" in message:
+        return ExportErrorCode.EXPORT_HISTORY_STALE
+    if "Downloaded file is empty" in message:
+        return ExportErrorCode.EMPTY_FILE
+    return ExportErrorCode.UNKNOWN
+
+
+def _select_download_strategy(report) -> str:
+    if report.export_endpoint:
+        return "api"
+    if report.use_export_marker:
+        return "marker_history"
+    if report.export_via_history:
+        return "history"
+    return "direct"
+
+
+def _download_via_api_export(
+    session: BrowserSession,
+    page: Page,
+    config: AppConfig,
+    report,
+    month_period: MonthPeriod,
+    output_path: Path,
+    export_file_name: str,
+) -> Path:
+    base_url = config.base_url.rstrip("/")
+    if not page.url.startswith(base_url):
+        page.goto(base_url, wait_until="domcontentloaded")
+    _step("fetch export rows before trigger start")
+    before_rows = _load_export_rows(session, base_url)
+    _step("fetch export rows before trigger done")
+    before_max_id = max((int(row.get("id", 0)) for row in before_rows), default=0)
+    try:
+        _step("trigger start")
+        _run_with_timeout(
+            "trigger",
+            config.timeout_ms,
+            lambda: _trigger_async_export(
+                session,
+                f"{base_url}{report.export_endpoint}",
+                export_file_name,
+            ),
+        )
+        _step("trigger done")
+    except Exception as exc:  # noqa: BLE001
+        # Known behavior: some Herm Finance reports return 500 on trigger, but the export row
+        # still appears in /api/resources/export-file/all and can be downloaded from there.
+        logger.warning(
+            "%s | %s | trigger failed -> %s",
+            report.code,
+            month_period.label,
+            exc,
+        )
+    _step("fetch status start")
+    _run_with_timeout(
+        "status",
+        config.timeout_ms,
+        lambda: _request_json(session, "GET", f"{base_url}/api/export_files/status"),
+    )
+    _step("fetch status done")
+    _step("poll new row start")
+    row = _run_with_timeout(
+        "export_rows",
+        config.timeout_ms,
+        lambda: _poll_ready_export_row(
+            session,
+            base_url,
+            export_file_name,
+            config.timeout_ms,
+            before_max_id,
+            report.export_ready_name,
+        ),
+    )
+    _step("poll new row done")
+    _step("download start")
+    body, disposition = _run_with_timeout(
+        "download",
+        config.timeout_ms,
+        lambda: _download_export_file(session, base_url, row["id"]),
+    )
+    _step("download done")
+    _step("save file start")
+    saved_path = _save_export_bytes(output_path, body, disposition)
+    _step("save file done")
+    return saved_path
+
+
+def _download_via_marker_history(
+    session: BrowserSession,
+    page: Page,
+    config: AppConfig,
+    target_dir: Path,
+    output_path: Path,
+    export_marker: str,
+) -> Path:
+    # Marker flow (applications, budget_rows):
+    #   1. Record max export ID before triggering.
+    #   2. Click export -> enter filename in popover -> upload.
+    #   3. API-poll until our specific file is ready.
+    #   4. Open history panel -> click first (newest) download button.
+    base_url = config.base_url.rstrip("/")
+    before_rows = _load_export_rows(session, base_url)
+    before_max_id = max((int(r.get("id", 0)) for r in before_rows), default=0)
+    _trigger_export_with_marker(page, export_marker)
+    _wait_for_export_ready_by_name(
+        session,
+        base_url,
+        export_marker,
+        config.timeout_ms,
+        min_id=before_max_id,
+    )
+    return _download_from_history(page, target_dir, output_path, config.timeout_ms)
+
+
+def _download_via_history(
+    page: Page,
+    config: AppConfig,
+    report,
+    target_dir: Path,
+    output_path: Path,
+) -> Path:
+    baseline = _snapshot_history_top_row(page, config.timeout_ms)
+    _step("export click start")
+    _click_export(page)
+    _step("export click done")
+    page.wait_for_timeout(report.wait_after_export_ms)
+    _wait_for_history_refresh(page, baseline, config.timeout_ms)
+    return _download_from_history(page, target_dir, output_path, config.timeout_ms)
+
+
+def _download_via_direct_browser(
+    page: Page,
+    config: AppConfig,
+    report,
+    target_dir: Path,
+    output_path: Path,
+) -> Path:
+    return _save_download(
+        page,
+        target_dir,
+        output_path,
+        config.timeout_ms,
+        report.wait_after_export_ms,
+        report.export_via_history,
+        session=None,
+        base_url="",
+        before_max_id=0,
+    )
+
+
 def download_report_for_month(
     session: BrowserSession,
     config: AppConfig,
@@ -564,7 +748,9 @@ def download_report_for_month(
             else report.file_prefix
         )
 
-    for attempt in range(1, 4):
+    retry_policy = RetryPolicy()
+    for attempt in range(1, retry_policy.max_attempts + 1):
+        current_stage = "start"
         try:
             log_result(report_code, month_period, "started")
             existing = existing_output_paths(
@@ -578,12 +764,14 @@ def download_report_for_month(
                 log_result(
                     report_code, month_period, "skipped", f"exists -> {existing[0]}"
                 )
-                return DownloadResult(True, existing[0])
+                return DownloadResult(True, existing[0], attempts=attempt)
             logger.info("%s | %s | opening -> %s", report_code, month_period.label, url)
+            current_stage = "page_open"
             _step("page open start")
             page.goto(url, wait_until="domcontentloaded")
             _step("page open done")
             if report.apply_search_before_export:
+                current_stage = "apply_search"
                 _step("apply search start")
                 # herm.finance date-range picker uses DD.MM.YY (two-digit year).
                 payment_date = (
@@ -608,144 +796,88 @@ def download_report_for_month(
                     clear_text_input_labels=report.clear_text_input_labels,
                 )
                 _step("apply search done")
-            if report.export_endpoint:
-                base_url = config.base_url.rstrip("/")
-                if not page.url.startswith(base_url):
-                    page.goto(base_url, wait_until="domcontentloaded")
-                _step("fetch export rows before trigger start")
-                before_rows = _load_export_rows(session, base_url)
-                _step("fetch export rows before trigger done")
-                before_max_id = max(
-                    (int(row.get("id", 0)) for row in before_rows), default=0
+            strategy = _select_download_strategy(report)
+            current_stage = strategy
+            if strategy == "api":
+                saved_path = _download_via_api_export(
+                    session,
+                    page,
+                    config,
+                    report,
+                    month_period,
+                    output_path,
+                    export_file_name,
                 )
-                try:
-                    _step("trigger start")
-                    _run_with_timeout(
-                        "trigger",
-                        config.timeout_ms,
-                        lambda: _trigger_async_export(
-                            session,
-                            f"{base_url}{report.export_endpoint}",
-                            export_file_name,
-                        ),
-                    )
-                    _step("trigger done")
-                except Exception as exc:  # noqa: BLE001
-                    # Known behavior: some Herm Finance reports return 500 on trigger, but the export row
-                    # still appears in /api/resources/export-file/all and can be downloaded from there.
-                    logger.warning(
-                        "%s | %s | trigger failed -> %s",
-                        report_code,
-                        month_period.label,
-                        exc,
-                    )
-                _step("fetch status start")
-                _run_with_timeout(
-                    "status",
-                    config.timeout_ms,
-                    lambda: _request_json(
-                        session, "GET", f"{base_url}/api/export_files/status"
-                    ),
+            elif strategy == "marker_history":
+                saved_path = _download_via_marker_history(
+                    session,
+                    page,
+                    config,
+                    target_dir,
+                    output_path,
+                    export_marker or report.file_prefix,
                 )
-                _step("fetch status done")
-                _step("poll new row start")
-                row = _run_with_timeout(
-                    "export_rows",
-                    config.timeout_ms,
-                    lambda: _poll_ready_export_row(
-                        session,
-                        base_url,
-                        export_file_name,
-                        config.timeout_ms,
-                        before_max_id,
-                        report.export_ready_name,
-                    ),
+            elif strategy == "history":
+                saved_path = _download_via_history(
+                    page,
+                    config,
+                    report,
+                    target_dir,
+                    output_path,
                 )
-                _step("poll new row done")
-                _step("download start")
-                body, disposition = _run_with_timeout(
-                    "download",
-                    config.timeout_ms,
-                    lambda: _download_export_file(session, base_url, row["id"]),
-                )
-                _step("download done")
-                _step("save file start")
-                saved_path = _save_export_bytes(output_path, body, disposition)
-                _step("save file done")
             else:
-                if export_marker:
-                    # Marker flow (applications, budget_rows):
-                    #   1. Record max export ID before triggering.
-                    #   2. Click export → enter filename in popover → «Загрузить».
-                    #   3. API-poll until our specific file is ready (avoids clicking
-                    #      a stale older file that was already in the history panel).
-                    #   4. Open history panel → click first (newest) download button.
-                    base_url = config.base_url.rstrip("/")
-                    before_rows = _load_export_rows(session, base_url)
-                    before_max_id = max(
-                        (int(r.get("id", 0)) for r in before_rows), default=0
-                    )
-                    _trigger_export_with_marker(page, export_marker)
-                    _wait_for_export_ready_by_name(
-                        session,
-                        base_url,
-                        export_marker,
-                        config.timeout_ms,
-                        min_id=before_max_id,
-                    )
-                    saved_path = _download_from_history(
-                        page, target_dir, output_path, config.timeout_ms
-                    )
-                else:
-                    if report.export_via_history:
-                        _via_history_baseline = _snapshot_history_top_row(
-                            page, config.timeout_ms
-                        )
-                        _step("export click start")
-                        _click_export(page)
-                        _step("export click done")
-                        page.wait_for_timeout(report.wait_after_export_ms)
-                        _wait_for_history_refresh(
-                            page, _via_history_baseline, config.timeout_ms
-                        )
-                        saved_path = _download_from_history(
-                            page, target_dir, output_path, config.timeout_ms
-                        )
-                    else:
-                        saved_path = _save_download(
-                            page,
-                            target_dir,
-                            output_path,
-                            config.timeout_ms,
-                            report.wait_after_export_ms,
-                            report.export_via_history,
-                            session=None,
-                            base_url="",
-                            before_max_id=0,
-                        )
+                saved_path = _download_via_direct_browser(
+                    page,
+                    config,
+                    report,
+                    target_dir,
+                    output_path,
+                )
             log_result(report_code, month_period, "saved", str(saved_path))
             if report_code == "account_balances" and saved_path.suffix == ".xlsx" and saved_path.exists():
                 _repair_xlsx_dimension(saved_path)
-            return DownloadResult(True, saved_path)
+            return DownloadResult(True, saved_path, attempts=attempt)
         except PlaywrightTimeoutError as exc:
             logger.warning(
                 "%s | %s | timeout attempt %s", report_code, month_period.label, attempt
             )
             last_error = f"timeout: {exc}"
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = current_stage
         except PlaywrightError as exc:
             last_error = f"playwright error: {exc}"
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = current_stage
         except _StageTimeout as exc:
             last_error = f"timeout stage: {exc.stage}"
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = exc.stage
         except Exception as exc:  # noqa: BLE001
             last_error = str(exc)
+            last_error_code = _error_code_for_exception(exc, current_stage)
+            last_error_stage = current_stage
 
-        if attempt < 3:
-            sleep(2 * attempt)
+        if retry_policy.should_retry(last_error_code.value, attempt):
+            sleep(retry_policy.sleep_seconds(attempt))
             continue
         contextual_error = f"{report_code}:{month_period.label}:{last_error}"
         log_result(report_code, month_period, "error", contextual_error)
-        return DownloadResult(False, None, contextual_error)
+        return DownloadResult(
+            False,
+            None,
+            contextual_error,
+            last_error_code.value,
+            last_error_stage,
+            last_error,
+            attempt,
+        )
 
     return DownloadResult(
-        False, None, f"{report_code}:{month_period.label}:unknown error"
+        False,
+        None,
+        f"{report_code}:{month_period.label}:unknown error",
+        ExportErrorCode.UNKNOWN.value,
+        "unknown",
+        "unknown error",
+        3,
     )

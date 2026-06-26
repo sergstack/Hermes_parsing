@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from io import BytesIO
 from zipfile import ZipFile
 
 from app.export_api import (
@@ -11,6 +12,13 @@ from app.export_files import (
     repair_xlsx_dimension,
     save_export_bytes,
 )
+
+
+def _xlsx_bytes(payload: str = "payload") -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as zf:
+        zf.writestr("xl/workbook.xml", payload)
+    return buffer.getvalue()
 
 
 def test_determine_extension_uses_filename_suffix():
@@ -28,23 +36,24 @@ def test_determine_extension_falls_back_to_bin():
 def test_move_download_overwrites_existing_target(tmp_path):
     source = tmp_path / "source.xlsx"
     target = tmp_path / "nested" / "target.xlsx"
-    source.write_text("new", encoding="utf-8")
+    source.write_bytes(_xlsx_bytes("new"))
     target.parent.mkdir()
-    target.write_text("old", encoding="utf-8")
+    target.write_bytes(_xlsx_bytes("old"))
 
     move_download(source, target)
 
     assert not source.exists()
-    assert target.read_text(encoding="utf-8") == "new"
+    assert target.read_bytes() == _xlsx_bytes("new")
 
 
 def test_save_export_bytes_uses_content_disposition_filename(tmp_path):
     output_path = tmp_path / "target.xlsx"
 
-    saved = save_export_bytes(output_path, b"payload", 'attachment; filename="server.xlsx"')
+    data = _xlsx_bytes()
+    saved = save_export_bytes(output_path, data, 'attachment; filename="server.xlsx"')
 
     assert saved == output_path
-    assert output_path.read_bytes() == b"payload"
+    assert output_path.read_bytes() == data
 
 
 def test_repair_xlsx_dimension_uses_actual_cells(tmp_path):

@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from dataclasses import dataclass, field, replace
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from .auth import ensure_logged_in, save_session_state
@@ -14,7 +15,9 @@ from .browser import close_browser_session
 from .config import normalize_config, read_config
 from .dates import MonthPeriod, build_months_range, build_months_range_until_year_end
 from .downloaders import download_report_for_month
+from .failure_artifacts import write_failure_artifacts
 from .logging_utils import setup_logging
+from .metrics import AttemptTiming, RunMetrics, StageTiming, write_run_metrics
 from .paths import build_output_path
 from .reports import REPORT_DEFINITIONS
 
@@ -67,10 +70,10 @@ def _cons_budget_periods(today: date | None = None) -> list[MonthPeriod]:
 
 def _periods_for_report(report_code: str, start_date: str, today: date | None = None):
     if report_code == "budget_rows":
-        return build_months_range_until_year_end(start_date)
+        return build_months_range_until_year_end(start_date, today=today)
     if report_code == "cons_budget":
         return _cons_budget_periods(today)
-    return build_months_range(start_date)
+    return build_months_range(start_date, today=today)
 
 
 def _build_planned_reports(config, report_codes: list[str]) -> list[dict]:
@@ -125,6 +128,34 @@ def _write_summary(log_dir: Path, summary: RunSummary) -> Path:
     return summary_path
 
 
+def _new_run_id() -> str:
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _planned_reports_to_metrics(run_id: str, planned_reports: list[dict]) -> RunMetrics:
+    return RunMetrics(
+        run_id=run_id,
+        status="planned",
+        dry_run=True,
+        attempts=[
+            AttemptTiming(
+                report_code=item["report_code"],
+                period=item["period"],
+                attempt=0,
+                status="planned",
+                output_path=item["output_path"],
+            )
+            for item in planned_reports
+        ],
+    )
+
+
+def _result_file_size(output_path: Path | None) -> int | None:
+    if output_path and output_path.exists():
+        return output_path.stat().st_size
+    return None
+
+
 def _run_dry_run(config, report_codes: list[str]) -> int:
     summary = RunSummary()
     summary.planned_reports = _build_planned_reports(config, report_codes)
@@ -135,13 +166,17 @@ def _run_dry_run(config, report_codes: list[str]) -> int:
             item["period"],
             item["output_path"],
         )
-    _write_summary(Path("logs"), summary)
+    log_dir = Path("logs")
+    _write_summary(log_dir, summary)
+    write_run_metrics(
+        log_dir, _planned_reports_to_metrics(_new_run_id(), summary.planned_reports)
+    )
     return 0
 
 
 def main() -> int:
     args = _parse_args()
-    config = normalize_config(read_config(args.config), Path.cwd())
+    config = normalize_config(read_config(args.config))
     config = _apply_overrides(config, args)
     setup_logging(Path("logs"))
     report_codes = _selected_reports(args.reports)
@@ -150,6 +185,8 @@ def main() -> int:
         return _run_dry_run(config, report_codes)
 
     summary = RunSummary()
+    metrics_attempts: list[AttemptTiming] = []
+    run_id = _new_run_id()
     session = ensure_logged_in(config)
 
     try:
@@ -162,19 +199,70 @@ def main() -> int:
                     and period != active_periods[0]
                 ):
                     continue
+                started = time.perf_counter()
                 result = download_report_for_month(session, config, report_code, period)
+                duration_sec = round(time.perf_counter() - started, 6)
+                status = "success" if result.success else "failed"
+                metrics_attempts.append(
+                    AttemptTiming(
+                        report_code=report_code,
+                        period=period.label,
+                        attempt=result.attempts,
+                        status=status,
+                        error_code=result.error_code,
+                        duration_sec=duration_sec,
+                        output_path=str(result.output_path)
+                        if result.output_path
+                        else None,
+                        file_size=_result_file_size(result.output_path),
+                        stages=[
+                            StageTiming(
+                                stage="download_report",
+                                duration_sec=duration_sec,
+                                status=status,
+                                error_code=result.error_code,
+                            )
+                        ],
+                    )
+                )
                 if result.success:
                     summary.success_count += 1
                 else:
                     summary.error_count += 1
                     summary.failed_reports.append(f"{report_code}:{period.label}")
+                    write_failure_artifacts(
+                        Path("logs"),
+                        run_id,
+                        report_code,
+                        period.label,
+                        {
+                            "report_code": report_code,
+                            "period": period.label,
+                            "error": result.error,
+                            "error_code": result.error_code,
+                            "error_stage": result.error_stage,
+                            "error_message": result.error_message,
+                        },
+                        metrics_attempts[-1].to_dict(),
+                        getattr(session, "page", None),
+                    )
         logger.info(
             "summary | success=%s | error=%s | failed=%s",
             summary.success_count,
             summary.error_count,
             ", ".join(summary.failed_reports) if summary.failed_reports else "none",
         )
-        _write_summary(Path("logs"), summary)
+        log_dir = Path("logs")
+        _write_summary(log_dir, summary)
+        write_run_metrics(
+            log_dir,
+            RunMetrics(
+                run_id=run_id,
+                status="success" if summary.error_count == 0 else "failed",
+                dry_run=False,
+                attempts=metrics_attempts,
+            ),
+        )
         save_session_state(session, config.session_file)
         return 0 if summary.error_count == 0 else 1
     finally:

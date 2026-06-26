@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from .browser import ensure_parent_dir
+from .file_integrity import validate_downloaded_file
 from .paths import normalize_download_name
 
 
@@ -29,6 +30,7 @@ def move_download(download_path: Path, output_path: Path) -> None:
     if output_path.exists():
         output_path.unlink()
     shutil.move(str(download_path), str(output_path))
+    validate_downloaded_file(output_path, output_path.suffix)
 
 
 def save_export_bytes(output_path: Path, data: bytes, disposition: str) -> Path:
@@ -41,9 +43,7 @@ def save_export_bytes(output_path: Path, data: bytes, disposition: str) -> Path:
     final_path = output_path.with_suffix(ext)
     ensure_parent_dir(final_path)
     final_path.write_bytes(data)
-    if final_path.stat().st_size == 0:
-        raise RuntimeError("Downloaded file is empty")
-    return final_path
+    return validate_downloaded_file(final_path, final_path.suffix)
 
 
 def latest_downloaded_file(download_dir: Path, pattern: str = "*.xlsx") -> Path | None:
@@ -64,7 +64,7 @@ def move_latest_download(
     if output_path.exists():
         output_path.unlink()
     shutil.move(str(latest), str(output_path))
-    return output_path
+    return validate_downloaded_file(output_path, output_path.suffix)
 
 
 def move_latest_download_since(
@@ -86,7 +86,7 @@ def move_latest_download_since(
     if output_path.exists():
         output_path.unlink()
     shutil.move(str(latest), str(output_path))
-    return output_path
+    return validate_downloaded_file(output_path, output_path.suffix)
 
 
 def repair_xlsx_dimension(path: Path) -> None:
