@@ -29,6 +29,7 @@ from .export_flows import (
 from .output_writer import (
     determine_extension as _determine_extension,
     move_download as _move_download,
+    repair_xlsx_dimension as _repair_xlsx_dimension,
     save_export_bytes as _save_export_bytes,
 )
 from .paths import build_output_path, ensure_dir, existing_output_paths, normalize_download_name
@@ -145,12 +146,65 @@ def _set_date_range_by_label(page: Page, label_text: str, start: str, end: str) 
         )
 
 
+def _set_single_date_by_label(page: Page, label_text: str, date_str: str) -> None:
+    """Fill a single Element-UI date input next to a label containing *label_text*."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:  # noqa: BLE001
+        pass
+    form_item = page.locator(".el-form-item").filter(has_text=label_text).first
+    field = form_item.locator("input.el-input__inner").first
+    field.wait_for(state="visible", timeout=10000)
+    field.click(timeout=10000)
+    field.fill(date_str, timeout=3000)
+    field.evaluate(
+        """(el, value) => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.blur();
+        }""",
+        date_str,
+    )
+    page.wait_for_timeout(200)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(150)
+    page.mouse.click(4, 4)
+    page.wait_for_timeout(300)
+
+    actual = field.input_value(timeout=3000)
+    if actual != date_str:
+        raise RuntimeError(
+            f"Date filter '{label_text}' was not applied: expected {date_str}, got {actual!r}"
+        )
+
+
 def _clear_checked_boxes_by_label(page: Page, labels: tuple[str, ...]) -> None:
     for label in labels:
         form_item = page.locator(".el-form-item").filter(has_text=label).first
         checked_box = form_item.locator(".el-checkbox__input.is-checked").first
         if checked_box.count() > 0:
             checked_box.click(timeout=5000)
+            page.wait_for_timeout(100)
+
+
+def _clear_text_inputs_by_label(page: Page, labels: tuple[str, ...]) -> None:
+    for label in labels:
+        form_item = page.locator(".el-form-item").filter(has_text=label).first
+        inputs = form_item.locator("input.el-input__inner")
+        for index in range(inputs.count()):
+            field = inputs.nth(index)
+            field.fill("", timeout=3000)
+            field.evaluate(
+                """(el) => {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(el, '');
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }"""
+            )
             page.wait_for_timeout(100)
 
 
@@ -172,14 +226,20 @@ def _apply_search(
     payment_date: tuple[str, str] | None = None,
     date_filter_label: str = "Дата оплаты",
     clear_checkbox_labels: tuple[str, ...] = (),
+    clear_text_input_labels: tuple[str, ...] = (),
     select_filters: tuple[tuple[str, str], ...] = (),
+    single_date: str | None = None,
 ) -> None:
     if pre_wait_ms:
         page.wait_for_timeout(pre_wait_ms)
+    if single_date:
+        _set_single_date_by_label(page, date_filter_label, single_date)
     if payment_date:
         _set_date_range_by_label(page, date_filter_label, payment_date[0], payment_date[1])
     if clear_checkbox_labels:
         _clear_checked_boxes_by_label(page, clear_checkbox_labels)
+    if clear_text_input_labels:
+        _clear_text_inputs_by_label(page, clear_text_input_labels)
     if select_filters:
         _set_select_filters_by_label(page, select_filters)
     if reserves_filter_value:
@@ -480,6 +540,9 @@ def download_report_for_month(
                     month_period.start.strftime("%d.%m.%y"),
                     month_period.end.strftime("%d.%m.%y"),
                 ) if report.payment_date_filter else None
+                single_date = (
+                    month_period.end.strftime("%d.%m.%y")
+                ) if report.single_date_filter else None
                 _apply_search(
                     page,
                     config.timeout_ms,
@@ -489,11 +552,11 @@ def download_report_for_month(
                     payment_date=payment_date,
                     date_filter_label=report.date_filter_label,
                     clear_checkbox_labels=report.clear_checkbox_labels,
+                    clear_text_input_labels=report.clear_text_input_labels,
                     select_filters=report.select_filters,
+                    single_date=single_date,
                 )
                 _step("apply search done")
-                if report_code == "account_balances":
-                    page.wait_for_timeout(5000)
             if report.export_endpoint:
                 base_url = config.base_url.rstrip("/")
                 if not page.url.startswith(base_url):
@@ -556,6 +619,8 @@ def download_report_for_month(
                 else:
                     saved_path = _save_download(page, target_dir, output_path, config.timeout_ms, report.wait_after_export_ms, report.export_via_history)
             log_result(report_code, month_period, "saved", str(saved_path))
+            if report_code == "account_balances" and saved_path.suffix == ".xlsx":
+                _repair_xlsx_dimension(saved_path)
             return DownloadResult(True, saved_path)
         except PlaywrightTimeoutError as exc:
             logger.warning("%s | %s | timeout attempt %s", report_code, month_period.label, attempt)

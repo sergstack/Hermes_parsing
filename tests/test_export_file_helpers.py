@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import date
 from unittest.mock import MagicMock
+from zipfile import ZipFile
 
 from app.downloaders import (
     _candidate_export_names,
@@ -11,6 +12,7 @@ from app.downloaders import (
     resolve_report_output_target,
 )
 from app.dates import MonthPeriod
+from app.output_writer import repair_xlsx_dimension
 
 
 def test_determine_extension_uses_filename_suffix():
@@ -45,6 +47,29 @@ def test_save_export_bytes_uses_content_disposition_filename(tmp_path):
 
     assert saved == output_path
     assert output_path.read_bytes() == b"payload"
+
+
+def test_repair_xlsx_dimension_uses_actual_cells(tmp_path):
+    workbook = tmp_path / "book.xlsx"
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<dimension ref="A1:C1"/>'
+        '<sheetData>'
+        '<row r="1"><c r="A1"><v>1</v></c></row>'
+        '<row r="4"><c r="L4"><v>2</v></c></row>'
+        '</sheetData>'
+        '</worksheet>'
+    )
+    with ZipFile(workbook, "w") as zf:
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+        zf.writestr("xl/workbook.xml", "<workbook/>")
+
+    repair_xlsx_dimension(workbook)
+
+    with ZipFile(workbook) as zf:
+        repaired = zf.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert '<dimension ref="A1:L4"/>' in repaired
 
 
 def test_candidate_export_names_for_monthly_file():
@@ -100,7 +125,7 @@ def test_resolve_report_output_target_for_single_report(tmp_path):
 
     assert target.export_file_name == "contractors.xlsx"
     assert target.output_path == tmp_path / "contractors" / "contractors.xlsx"
-    assert target.export_marker is None
+    assert target.export_marker == "contractors_2026-03"
 
 
 def test_resolve_report_output_target_for_account_balances_uses_period_end(tmp_path):

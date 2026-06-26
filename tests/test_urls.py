@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from app.dates import build_months_range_until_year_end, MonthPeriod
-from app.main import build_cons_budget_period
+from app.orchestration import build_cons_budget_period
 from app.reports import (
     REPORT_DEFINITIONS,
     _build_account_balances_url,
@@ -53,7 +53,7 @@ from app.reports import (
         ),
         (
             _build_account_balances_url,
-            "https://herm.finance/ledger/reports/account_balance_report?date=2026-03-31&exclude_zero_balances=1&exclude_blocked=0&exclude_closed=1&exclude_moneyboxes=0&exclude_archived=1&is_holder=false",
+            "https://herm.finance/ledger/reports/account_balance_report?date=2026-03-31&exclude_zero_balances=0&exclude_blocked=0&exclude_closed=0&exclude_moneyboxes=0&exclude_archived=1&is_holder=false&reportCurrencyId=5",
         ),
     ],
 )
@@ -93,10 +93,10 @@ def test_cons_budget_filters():
     assert rd.select_filters == (("Проекты", "Azp_admin"), ("ВГО", "исключить"))
 
 
-def test_cons_budget_period_spans_previous_and_current_year():
-    period = build_cons_budget_period(today=date(2026, 5, 14))
+def test_cons_budget_period_uses_config_start_date_until_current_year_end():
+    period = build_cons_budget_period(date(2024, 1, 1), today=date(2026, 5, 14))
 
-    assert period.start == date(2025, 1, 1)
+    assert period.start == date(2024, 1, 1)
     assert period.end == date(2026, 12, 31)
 
 

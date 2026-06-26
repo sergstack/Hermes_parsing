@@ -36,7 +36,11 @@ class ReportDefinition:
     file_prefix: str = "raw"
     wait_after_export_ms: int = 5000
     clear_checkbox_labels: tuple[str, ...] = ()
+    clear_text_input_labels: tuple[str, ...] = ()
     select_filters: tuple[tuple[str, str], ...] = ()
+    # If True, _apply_search fills a single (non-range) date picker before clicking "Показать".
+    # The picker label is taken from date_filter_label.
+    single_date_filter: bool = False
 
 
 def month_start_end(period: MonthPeriod) -> tuple[str, str]:
@@ -109,8 +113,9 @@ def _build_account_balances_url(base_url: str, period: MonthPeriod) -> str:
     end = period.end.strftime("%Y-%m-%d")
     return (
         f"{base_url}/ledger/reports/account_balance_report?"
-        f"date={end}&exclude_zero_balances=1&exclude_blocked=0"
-        "&exclude_closed=1&exclude_moneyboxes=0&exclude_archived=1&is_holder=false"
+        f"date={end}&exclude_zero_balances=0&exclude_blocked=0"
+        "&exclude_closed=0&exclude_moneyboxes=0&exclude_archived=1&is_holder=false"
+        "&reportCurrencyId=5"
     )
 
 
@@ -123,6 +128,7 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         apply_search_before_export=True,
         use_export_marker=True,
         file_prefix="demands",
+        clear_text_input_labels=("ID заявки",),
     ),
     "dds_expenses": ReportDefinition(
         "dds_expenses", "/budgeting/reports/plan_fact_bdds_report", _build_dds_expenses_url, "p-fact",
@@ -185,7 +191,7 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         "/dictionary/contractors",
         _build_contractors_url,
         "contractors",
-        "/api/resources/contractor/export",
+        use_export_marker=True,
         repeat_each_month=False,
         file_prefix="contractors",
     ),
@@ -195,5 +201,10 @@ REPORT_DEFINITIONS: dict[str, ReportDefinition] = {
         _build_account_balances_url,
         "account_balances",
         apply_search_before_export=True,
+        single_date_filter=True,
+        date_filter_label="Дата",
+        pre_search_wait_ms=2000,
+        search_done_selector=None,
+        select_filters=(("Отчетная валюта", "EUR"), ("Нулевые остатки", "--"), ("Закрытые счета", "--")),
     ),
 }

@@ -8,7 +8,7 @@ def test_report_catalog_contracts():
         "dds": ("dds", "dds", True, True),
         "budget_rows": ("budget_rows", "raw", True, True),
         "cons_budget": ("cons_budget", "cons_budget", False, False),
-        "contractors": ("contractors", "contractors", False, False),
+        "contractors": ("contractors", "contractors", False, True),
         "account_balances": ("account_balances", "raw", True, False),
     }
 
@@ -21,8 +21,14 @@ def test_report_catalog_contracts():
         assert report.use_export_marker is use_export_marker
 
 
+def test_account_balances_applies_required_ui_filters():
+    rd = REPORT_DEFINITIONS["account_balances"]
+
+    assert rd.single_date_filter is True
+    assert rd.date_filter_label == "Дата"
+    assert rd.select_filters == (("Отчетная валюта", "EUR"), ("Нулевые остатки", "--"), ("Закрытые счета", "--"))
+
+
 def test_report_api_endpoint_contracts():
-    assert REPORT_DEFINITIONS["contractors"].export_endpoint == "/api/resources/contractor/export"
-    for code, report in REPORT_DEFINITIONS.items():
-        if code != "contractors":
-            assert report.export_endpoint is None
+    for report in REPORT_DEFINITIONS.values():
+        assert report.export_endpoint is None

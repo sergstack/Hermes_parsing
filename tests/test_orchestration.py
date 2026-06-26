@@ -2,8 +2,7 @@ from datetime import date
 from dataclasses import dataclass
 
 from app.dates import MonthPeriod
-from app.main import build_cons_budget_period
-from app.orchestration import periods_for_report
+from app.orchestration import build_cons_budget_period, periods_for_report
 from app.run_summary import RunSummary
 
 
@@ -49,11 +48,11 @@ def test_periods_for_budget_rows_uses_extended_periods():
     assert periods_for_report("budget_rows", periods, budget_rows_periods) == budget_rows_periods
 
 
-def test_periods_for_cons_budget_uses_previous_and_current_year():
-    periods = [MonthPeriod(date(2026, 1, 1), date(2026, 1, 31))]
+def test_periods_for_cons_budget_uses_config_start_date_until_current_year_end():
+    periods = [MonthPeriod(date(2024, 1, 1), date(2024, 1, 31))]
     budget_rows_periods = [MonthPeriod(date(2026, 12, 1), date(2026, 12, 31))]
 
     selected = periods_for_report("cons_budget", periods, budget_rows_periods, today=date(2026, 5, 15))
 
-    assert selected == [MonthPeriod(date(2025, 1, 1), date(2026, 12, 31))]
-    assert build_cons_budget_period(today=date(2026, 5, 15)) == selected[0]
+    assert selected == [MonthPeriod(date(2024, 1, 1), date(2026, 12, 31))]
+    assert build_cons_budget_period(date(2024, 1, 1), today=date(2026, 5, 15)) == selected[0]
