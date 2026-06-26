@@ -6,8 +6,6 @@ import json
 import time
 from pathlib import Path
 
-import pytest
-
 from app.auth import load_session_state, _session_cookies_valid, _remember_token_valid
 
 
